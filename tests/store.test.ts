@@ -6,7 +6,7 @@ import { agenda } from "../src/domain/select";
 import type { FileMeta } from "../src/domain/types";
 import * as A from "../src/store/actions";
 import { makeBackup, readBackup } from "../src/store/backup";
-import { docxText, extractPdf, itemsToText, paginate } from "../src/store/extract";
+import { docxText, extractPdf, itemsToSegments, itemsToText, paginate } from "../src/store/extract";
 import { MemoryPersistence } from "../src/store/persistence";
 import { AppStore } from "../src/store/store";
 
@@ -119,6 +119,45 @@ describe("armazenamento e ações", () => {
     ]);
   });
 
+  it("processo do eproc: eventos nos andamentos sem repetir e partes completadas", async () => {
+    const { store } = await setup();
+    const caseId = exec(store, A.saveCase, {
+      ...caseInput("5004321-73.2026.4.04.7100"),
+      parties: [
+        { id: "", name: "Maria Cliente", pole: "ativo", lawyers: "Você Advogado" },
+        { id: "", name: "Município de Exemplo", pole: "passivo" },
+      ],
+    });
+    const info = (events: number) => ({
+      system: "eproc",
+      parties: [
+        { name: "Maria Cliente", role: "Autor", pole: "ativo" as const, lawyers: ["Outro Nome (RS1)"], doc: "123.456.789-09", kind: "pf" as const },
+        { name: "Municipio de Exemplo", role: "Réu", pole: "passivo" as const, lawyers: ["Procurador Municipal (PGM123)"], kind: "publico" as const },
+        { name: "Estado Exemplar", role: "Réu", pole: "passivo" as const, lawyers: [], kind: "publico" as const },
+      ],
+      docs: [{ courtId: "Evento 1, INIC1", title: "Petição inicial (INIC1)", type: "inicial" as const, date: "2026-03-02", pages: [1, 1] as [number, number] }],
+      events: [
+        { n: 1, date: "2026-03-02", text: "Distribuído por sorteio" },
+        { n: 2, date: "2026-03-05", text: "Decisão interlocutória" },
+        { n: 3, date: "2026-03-09", text: "Juntada de certidão" },
+      ].slice(0, events),
+    });
+    exec(store, A.importCaseFile, { file: fileMeta("e1", 1), info: info(2), caseId });
+    exec(store, A.importCaseFile, { file: fileMeta("e2", 1), info: info(3), caseId });
+    const c = store.getSnapshot()!.cases[caseId];
+    expect(c.history.filter((h) => h.kind === "evento").map((h) => [h.date, h.text, h.ref])).toEqual([
+      ["2026-03-02", "Evento 1: Distribuído por sorteio", "evento:1"],
+      ["2026-03-05", "Evento 2: Decisão interlocutória", "evento:2"],
+      ["2026-03-09", "Evento 3: Juntada de certidão", "evento:3"],
+    ]);
+    // o que foi digitado fica; o que faltava vem da capa; o ente público ganha o prazo em dobro
+    expect(c.parties.map((p) => [p.name, p.lawyers, p.doc, p.kind, p.doubleTerm])).toEqual([
+      ["Maria Cliente", "Você Advogado", "123.456.789-09", "pf", undefined],
+      ["Município de Exemplo", "Procurador Municipal (PGM123)", undefined, "publico", true],
+      ["Estado Exemplar", undefined, undefined, "publico", true],
+    ]);
+  });
+
   it("jurisprudência: evita duplicata e desfaz vínculos ao apagar o processo", async () => {
     const { store } = await setup();
     const caseId = exec(store, A.saveCase, caseInput("0801234-56.2023.8.20.5001"));
@@ -151,6 +190,24 @@ describe("leitura de arquivos", () => {
       it("ção devida", 50, 668, 50),
     ]);
     expect(text).toBe("MARIA (AUTOR) JOSÉ (ADVOGADO)\nSegunda linha\nindenização devida\nNum. 123 - Pág. 1");
+  });
+
+  it("guarda a posição dos trechos: um vão largo (outra coluna) começa outro trecho", () => {
+    const it = (str: string, x: number, y: number, w: number) => ({ str, transform: [9, 0, 0, 9, x, y], width: w, height: 9 });
+    const segs = itemsToSegments([
+      it("REQUERENTE", 144, 660, 49),
+      it(" ", 193, 660, 211),
+      it("REQUERIDO", 404, 660, 44),
+      it("FULANO DE TAL", 44, 645, 60),
+      it("(123.456.789-09)", 108, 645, 58),
+      it("BELTRANO", 310, 645.5, 40),
+    ]);
+    expect(segs.map((s) => [s.text, Math.round(s.x)])).toEqual([
+      ["REQUERENTE", 144],
+      ["REQUERIDO", 404],
+      ["FULANO DE TAL (123.456.789-09)", 44],
+      ["BELTRANO", 310],
+    ]);
   });
 
   it("lê PDF de verdade com o pdf.js", async () => {

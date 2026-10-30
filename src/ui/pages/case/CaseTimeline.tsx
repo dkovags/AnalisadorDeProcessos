@@ -1,10 +1,11 @@
-import { CalendarClock, CircleCheck, Clock3, FileText, NotebookPen, Trash } from "lucide-react";
+import { CalendarClock, CircleCheck, Clock3, FileText, Landmark, NotebookPen, Trash } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatDate } from "../../../domain/dates";
 import { NOTICE_KINDS } from "../../../domain/deadlines";
 import { DOC_TYPES } from "../../../domain/labels";
 import { docsOfCase, noticesOfCase, tasksOfCase } from "../../../domain/select";
-import type { Case } from "../../../domain/types";
+import { fold } from "../../../domain/text";
+import type { Case, Doc } from "../../../domain/types";
 import * as A from "../../../store/actions";
 import { Empty } from "../../components/basics";
 import { useData, useRun, useUI } from "../../context";
@@ -15,28 +16,53 @@ interface Event {
   icon: ReactNode;
   text: string;
   sub?: string;
+  /** No mesmo dia, os eventos mais novos do processo vêm antes. */
+  order?: number;
   onClick?: () => void;
   onDelete?: () => void;
 }
 
-/** Linha do tempo: documentos juntados, expedientes, providências protocoladas, mudanças de situação e anotações. */
+/** Número do evento do eproc na referência do documento ("Evento 12, PET1") ou do andamento ("evento:12"). */
+const eventOf = (ref?: string) => Number(ref?.match(/^evento[ :](\d+)/i)?.[1]) || undefined;
+
+/**
+ * Linha do tempo: movimentações do processo (eventos do eproc), documentos juntados, expedientes, providências
+ * protocoladas, mudanças de situação e anotações. Os documentos de um evento aparecem junto com ele.
+ */
 export function CaseTimeline({ c }: { c: Case }) {
   const ds = useData();
   const ui = useUI();
   const runAction = useRun();
   const events: Event[] = [];
-  for (const h of c.history)
+  const docs = docsOfCase(ds, c.id).filter((d) => d.type !== "processo");
+  const docsOfEvent = new Map<number, Doc[]>();
+  for (const d of docs) {
+    const n = eventOf(d.courtId);
+    if (n) docsOfEvent.set(n, [...(docsOfEvent.get(n) || []), d]);
+  }
+  const shown = new Set<number>();
+  for (const h of c.history) {
+    const n = h.kind === "evento" ? eventOf(h.ref) : undefined;
+    const own = n ? docsOfEvent.get(n) : undefined;
+    if (n) shown.add(n);
     events.push({
       key: `h${h.id}`,
       date: h.date,
-      icon: h.kind === "status" ? <Clock3 size={16} /> : <NotebookPen size={16} />,
+      icon: h.kind === "status" ? <Clock3 size={16} /> : h.kind === "evento" ? <Landmark size={16} /> : <NotebookPen size={16} />,
       text: h.text,
-      sub: h.kind === "nota" ? "Anotação" : undefined,
+      sub: own ? own.map((d) => d.title).join(" · ") : h.kind === "nota" ? "Anotação" : undefined,
+      order: n,
+      onClick: own ? () => ui.open({ type: "doc", docId: own[0].id }) : undefined,
       onDelete: () => runAction(A.deleteHistory, c.id, h.id),
     });
-  for (const d of docsOfCase(ds, c.id))
-    if (d.date && d.type !== "processo")
-      events.push({ key: `d${d.id}`, date: d.date, icon: <FileText size={16} />, text: `${DOC_TYPES[d.type]}: ${d.title}`, sub: d.signer, onClick: () => ui.open({ type: "doc", docId: d.id }) });
+  }
+  for (const d of docs) {
+    const n = eventOf(d.courtId);
+    if (!d.date || (n && shown.has(n))) continue;
+    // "Petição inicial: Petição inicial (INIC1)" fica só "Petição inicial (INIC1)"
+    const text = fold(d.title).startsWith(fold(DOC_TYPES[d.type])) ? d.title : `${DOC_TYPES[d.type]}: ${d.title}`;
+    events.push({ key: `d${d.id}`, date: d.date, icon: <FileText size={16} />, text, sub: d.signer, onClick: () => ui.open({ type: "doc", docId: d.id }) });
+  }
   for (const n of noticesOfCase(ds, c.id))
     events.push({
       key: `n${n.id}`,
@@ -48,7 +74,7 @@ export function CaseTimeline({ c }: { c: Case }) {
   for (const t of tasksOfCase(ds, c.id))
     if (t.doneAt)
       events.push({ key: `t${t.id}`, date: t.doneAt, icon: <CircleCheck size={16} />, text: `${t.kind === "audiencia" ? "Realizada" : "Protocolada"}: ${t.title}`, onClick: () => ui.open({ type: "task", taskId: t.id }) });
-  events.sort((a, b) => b.date.localeCompare(a.date));
+  events.sort((a, b) => b.date.localeCompare(a.date) || (b.order ?? 0) - (a.order ?? 0));
   return (
     <div className="tab-body">
       <div className="toolbar">
@@ -58,7 +84,8 @@ export function CaseTimeline({ c }: { c: Case }) {
       </div>
       {!events.length ? (
         <Empty icon={<Clock3 size={28} />} title="Nada registrado ainda">
-          Os documentos com data, os expedientes, as petições protocoladas e as mudanças de situação aparecem aqui, em ordem.
+          As movimentações do processo, os documentos com data, os expedientes, as petições protocoladas e as mudanças de situação aparecem
+          aqui, em ordem.
         </Empty>
       ) : (
         <ol className="timeline">

@@ -123,7 +123,7 @@ export function ImportDialog({
     }
     setItems(out);
     if (mode === "processo" && out[0]) {
-      const parsed = parseCaseFile(out[0].text.pages, { outline: out[0].text.outline });
+      const parsed = parseCaseFile(out[0].text.pages, { outline: out[0].text.outline, layout: out[0].text.layout });
       setInfo(parsed);
       const existing = caseId || (parsed.number ? A.findCaseByNumber(ds, parsed.number)?.id : undefined) || "";
       setTarget(existing);
@@ -181,7 +181,17 @@ export function ImportDialog({
                 value: info.value,
                 freeJustice: info.freeJustice,
                 secret: info.secret,
-                parties: info.parties.map((p, i) => ({ id: "", name: p.name, pole: p.pole, role: p.role, lawyers: p.lawyers.join("\n") || undefined, client: i === clientIdx })),
+                parties: info.parties.map((p, i) => ({
+                  id: "",
+                  name: p.name,
+                  pole: p.pole,
+                  role: p.role,
+                  lawyers: p.lawyers.join("\n") || undefined,
+                  doc: p.doc,
+                  kind: p.kind,
+                  doubleTerm: p.kind === "publico" || undefined,
+                  client: i === clientIdx,
+                })),
               },
         });
         onClose();
@@ -392,7 +402,7 @@ export function ImportDialog({
                       <input type="radio" name="client" checked={clientIdx === i} onChange={() => setClientIdx(i)} />
                       {p.name}{" "}
                       <span className="muted">
-                        ({p.role} · {POLES[p.pole].toLowerCase()})
+                        ({p.role} · {POLES[p.pole].toLowerCase()}){p.kind === "publico" && " · ente público, prazo em dobro"}
                         {p.lawyers.length > 0 && ` · ${p.lawyers.length === 1 ? "procurador" : "procuradores"}: ${p.lawyers.join(", ")}`}
                       </span>
                     </label>
@@ -402,6 +412,12 @@ export function ImportDialog({
               <h3 className="form-section">
                 {info.docs.length} {info.docs.length === 1 ? "documento" : "documentos"} em {items[0]?.text.pages.length} páginas
               </h3>
+              {!!info.events?.length && (
+                <p className="muted small">
+                  {info.events.length === 1 ? "1 movimentação (evento) entra" : `${info.events.length} movimentações (eventos) entram`} nos andamentos do
+                  processo.
+                </p>
+              )}
               <div className="doc-preview">
                 {info.docs.slice(0, 60).map((d, i) => (
                   <div key={i} className="doc-preview-row">

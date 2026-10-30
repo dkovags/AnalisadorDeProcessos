@@ -47,8 +47,11 @@ export interface HistoryEntry {
   date: string;
   /** Quando foi registrado. */
   at: string;
-  kind: "status" | "nota";
+  /** "status": mudança de situação; "nota": anotação; "evento": movimentação lida do processo (eventos do eproc). */
+  kind: "status" | "nota" | "evento";
   text: string;
+  /** Origem da entrada, para não repetir ao importar o processo de novo (ex.: "evento:12"). */
+  ref?: string;
 }
 
 export interface Case {

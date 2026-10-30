@@ -5,8 +5,8 @@ import { STATUS } from "../domain/labels";
 import { precedentKey } from "../domain/precedents";
 import { sameParty, squash } from "../domain/text";
 import type {
-  Case, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, Holiday, ID, Notice, NoticeStatus, Party, Precedent, Prefs, Task,
-  TaskKind, TaskStatus,
+  Case, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, HistoryEntry, Holiday, ID, Notice, NoticeStatus, Party, Precedent, Prefs,
+  Task, TaskKind, TaskStatus,
 } from "../domain/types";
 import { del, put, type Op } from "./ops";
 
@@ -337,15 +337,43 @@ export function importCaseFile(
   const ops: Op[] = [];
   let caseId = input.caseId;
   const { info } = input;
+  // movimentações (eventos do eproc) que ainda não estão nos andamentos
+  const withEvents = (c: Case): Case => {
+    const seen = new Set(c.history.map((h) => h.ref));
+    const extra: HistoryEntry[] = (info.events || [])
+      .filter((e) => !seen.has(`evento:${e.n}`))
+      .map((e) => ({ id: ctx.id("h"), date: e.date, at: ctx.now, kind: "evento", text: `Evento ${e.n}: ${e.text}`, ref: `evento:${e.n}` }));
+    return extra.length ? { ...c, history: [...c.history, ...extra] } : c;
+  };
   if (caseId) {
     const c = ds.cases[caseId];
     if (!c) throw new UserError("Processo não encontrado.");
-    const parties = [...c.parties];
+    // completa as partes já cadastradas (CPF/CNPJ, tipo de pessoa, procuradores) sem mudar o que foi digitado
+    const parties = c.parties.map((x) => {
+      const f = info.parties.find((p) => sameParty(x.name, p.name));
+      if (!f) return x;
+      return {
+        ...x,
+        doc: x.doc || f.doc,
+        kind: x.kind || f.kind,
+        doubleTerm: x.doubleTerm ?? (f.kind === "publico" ? true : undefined),
+        lawyers: x.lawyers || f.lawyers.join("\n") || undefined,
+      };
+    });
     for (const p of info.parties)
       if (!parties.some((x) => sameParty(x.name, p.name)))
-        parties.push({ id: ctx.id("pt"), name: p.name, role: p.role, pole: p.pole, lawyers: p.lawyers.join("\n") || undefined });
+        parties.push({
+          id: ctx.id("pt"),
+          name: p.name,
+          role: p.role,
+          pole: p.pole,
+          lawyers: p.lawyers.join("\n") || undefined,
+          doc: p.doc,
+          kind: p.kind,
+          doubleTerm: p.kind === "publico" || undefined,
+        });
     ops.push(
-      put("cases", {
+      put("cases", withEvents({
         ...c,
         className: c.className || info.className,
         body: c.body || info.body,
@@ -357,12 +385,12 @@ export function importCaseFile(
         secret: c.secret ?? info.secret,
         parties,
         updatedAt: ctx.now,
-      }),
+      })),
     );
   } else {
     if (!input.create) throw new UserError("Faltam os dados do processo.");
     const r = saveCase(ds, ctx, input.create);
-    ops.push(...r.ops);
+    ops.push(...r.ops.map((o) => (o.t === "put" && o.c === "cases" ? put("cases", withEvents(o.v as Case)) : o)));
     caseId = r.value;
   }
 
@@ -371,7 +399,7 @@ export function importCaseFile(
     id: ctx.id("d"),
     caseId,
     fileId: input.file.id,
-    title: `Processo integral${info.system ? ` (${info.system})` : ""}`,
+    title: `Processo integral${info.system ? ` (${info.system}${info.part ? `, parte ${info.part}` : ""})` : ""}`,
     type: "processo",
     origin: "arquivo",
     createdAt: ctx.now,

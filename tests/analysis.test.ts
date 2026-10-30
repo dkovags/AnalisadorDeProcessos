@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyze, classifyText, explicitTerms, requestedDocs } from "../src/domain/analysis";
-import { courtRef, eprocDoc, parseCaseFile } from "../src/domain/casefile";
+import { courtRef, eprocDoc, eventText, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
 import { cnjCheckDigits, formatCnj } from "../src/domain/cnj";
 import { fold } from "../src/domain/text";
 
@@ -267,8 +267,15 @@ describe("processo integral do eproc", () => {
       freeJustice: true,
     });
     expect(info.parties).toEqual([
-      { name: "Fulano de Tal", role: "Autor", pole: "ativo", lawyers: ["Beltrana Silva (RS012345)", "Ciclano Souza (RS054321)"] },
-      { name: "Instituto Nacional do Seguro Social - INSS", role: "Réu", pole: "passivo", lawyers: ["Procuradoria Regional Federal da 4ª Região (RS000001)"] },
+      { name: "Fulano de Tal", role: "Autor", pole: "ativo", lawyers: ["Beltrana Silva (RS012345)", "Ciclano Souza (RS054321)"], doc: "123.456.789-09", kind: "pf" },
+      {
+        name: "Instituto Nacional do Seguro Social - INSS",
+        role: "Réu",
+        pole: "passivo",
+        lawyers: ["Procuradoria Regional Federal da 4ª Região (RS000001)"],
+        doc: "29.979.036/0001-40",
+        kind: "publico",
+      },
     ]);
     expect(info.docs.map((d) => [d.courtId, d.type, d.title, d.pages, d.date])).toEqual([
       [undefined, "outro", "Capa do processo", [1, 1], undefined],
@@ -347,4 +354,194 @@ describe("processo integral do eproc", () => {
       ["Evento 8 - Sentença", "sentenca", [4, 4]],
     ]);
   });
+
+  it("aceita os códigos de documento com minúsculas, espaço ou sublinhado", () => {
+    expect(eprocDoc("CertAutMotNRec1")?.type).toBe("certidao");
+    expect(eprocDoc("PED LIMINAR_ANT TUTE1")?.type).toBe("peticao");
+    expect(eprocDoc("EMENDAINIC1")?.type).toBe("peticao");
+  });
+
+  it("escreve a descrição do evento com acentos, datas e siglas", () => {
+    expect(eventText("CONCLUSOS PARA DECISAODESPACHO")).toBe("Conclusos para decisão/despacho");
+    expect(eventText("DISPONIBILIZADO NO DJEN NO DIA 12032026 REFER AO EVENTO 4")).toBe("Disponibilizado no DJEN no dia 12/03/2026 ref. ao evento 4");
+    expect(eventText("REMETIDOS OS AUTOS PARA O NUCLEO DE JUSTICA 40 EXE01VCIV1J")).toBe("Remetidos os autos para o núcleo de justiça 4.0 EXE01VCIV1J");
+    expect(eventText("CONCEDIDA A ANTECIPACAO DE TUTELA COMPLEMENTAR AO EVENTO N 21")).toBe("Concedida a antecipação de tutela complementar ao evento nº 21");
+  });
+
+  it("lê o formato do TJRJ: páginas de separação, marcadores por documento e partes em colunas", () => {
+    const n = formatCnj({ seq: "3001234", year: "2026", j: "8", tr: "19", origin: "0001", dv: cnjCheckDigits({ seq: "3001234", year: "2026", j: "8", tr: "19", origin: "0001" }) });
+    const stampRJ = (ev: number, doc: string, pag: number) => `Processo ${n}/RJ, Evento ${ev}, ${doc}, Página ${pag}`;
+    const separator = (ev: number, description: string, date: string) =>
+      `PÁGINA DE SEPARAÇÃO\n(Gerada automaticamente pelo sistema.)\nEvento ${ev}\nEvento:\n${description}\nData:\n${date} 10:00:00\nUsuário:\nUSUARIO - SISTEMA\nProcesso:\n${n}/RJ\nSequência Evento:\n${ev}`;
+    const pages = [
+      `Tipo documento: CAPA PROCESSO\nEvento: abertura\nPROCESSO\nNº ${n}\nCapa: Parte 1`,
+      [
+        `Nº do processo ${n}`,
+        "Classe da ação: Procedimento Comum Cível",
+        "Competência Fazenda Pública (Saúde)",
+        "Data de autuação: 02/03/2026 10:00:00",
+        "Situação MOVIMENTO",
+        "Órgão Julgador: Juízo da 1ª Vara Cível da Comarca de Exemplo",
+        "Juiz(a): JUÍZA FICTÍCIA",
+        "Assuntos",
+        "Código Descrição Principal",
+        "1504050102 Tratamento médico-hospitalar, Pública, DIREITO DA SAÚDE Sim",
+        "15040201 Fornecimento de Medicamentos, Pública, DIREITO DA SAÚDE Não",
+        "Partes e Representantes",
+        "REQUERENTE REQUERIDO",
+        "MUNICIPIO DE EXEMPLO (11.222.333/0001-81) - Entidade",
+        "MARIA FICTÍCIA DA SILVA (123.456.789-09) - Pessoa Física",
+        "Procurador(es):",
+        "CARLOS PROCURADOR MUNICIPAL PGM123456",
+        "ANA ADVOGADA EXEMPLO RJ123456",
+        "ESTADO EXEMPLAR - Pessoa Física",
+        "JOÃO COM NOME MUITO COMPRIDO DE",
+        "ESTADO EXEMPLAR (22.333.444/0001-55) - Entidade",
+        "EXEMPLO (987.654.321-00) - Pessoa Física",
+        "Procurador(es):",
+        "DIANA PROCURADORA ESTADUAL PGE7654321",
+        "MINISTÉRIO PÚBLICO",
+        "MINISTÉRIO PÚBLICO DO ESTADO EXEMPLAR (33.444.555/0001-66)",
+        "Informações Adicionais",
+        "Chave Processo: 123456789012 Valor da Causa: R$ 50.000,00 Nível de Sigilo do Processo: Sem Sigilo (Nível 0)",
+        "Doença Grave: Sim Grande devedor: Não Idoso: Sim",
+        "Justiça Gratuita: Deferida Opção por Juízo 100% Digital: Sim",
+      ].join("\n"),
+      separator(1, "DISTRIBUIDO POR SORTEIO EXE01VCIV1J", "02/03/2026"),
+      `${stampRJ(1, "INIC1", 1)}\nEXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO\nMARIA FICTÍCIA DA SILVA vem propor a presente ação.`,
+      `${stampRJ(1, "INIC1", 2)}\nDos pedidos.`,
+      `${stampRJ(1, "PROC2", 1)}\nPROCURAÇÃO\nOutorgante: MARIA FICTÍCIA DA SILVA. Outorgada: ANA ADVOGADA EXEMPLO.`,
+      `${stampRJ(1, "OUT3", 1)}\nLAUDO MÉDICO\nAtesto que a paciente necessita de tratamento.`,
+      separator(2, "AUTOS INCLUIDOS NO JUIZO 100 DIGITAL", "02/03/2026"),
+      separator(3, "CONCLUSOS PARA DECISAODESPACHO", "03/03/2026"),
+      separator(4, "DECISAO INTERLOCUTORIA", "05/03/2026"),
+      `${stampRJ(4, "DESPADEC1", 1)}\nDefiro a tutela de urgência requerida.`,
+      `${stampRJ(4, "DESPADEC1", 2)}\nIntimem-se.\nDocumento assinado eletronicamente por JUÍZA FICTÍCIA, Juíza de Direito , em 05/03/2026, às 18:00:00, conforme art. 1º, III, informando o código verificador 190000000001v1 e o código CRC abcdef12.`,
+      separator(5, "PETICAO PEDIDO DE LIMINARANTECIPACAO DE TUTELA", "10/03/2026"),
+      `${stampRJ(5, "PED LIMINAR_ANT TUTE1", 1)}\nEXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO\nRequer a intimação dos réus.`,
+      separator(6, "EXPEDICAO DE DOCUMENTO MOTIVO DO NAO RECOLHIMENTO DE CUSTAS JUSTICA GRATUITAPEDIDO DE GRATUIDADE", "10/03/2026"),
+      `${stampRJ(6, "CertAutMotNRec1", 1)}\nCERTIDÃO AUTOMATIZADA\nCertifico que a demanda foi distribuída sem o recolhimento de custas.`,
+      separator(7, "DISPONIBILIZADO NO DJEN NO DIA 12032026 REFER AO EVENTO 4", "12/03/2026"),
+    ];
+    const doc = (event: number, number: number, label: string) => `Evento ${event} - Doc. ${number} - ${label}`;
+    const outline: OutlineEntry[] = [
+      { title: `PROCESSO ${n}/RJ`, page: 1, depth: 0, leaf: false },
+      { title: "Capa do Processo", page: 2, depth: 1, leaf: true, parent: `PROCESSO ${n}/RJ` },
+      { title: doc(1, 1, "PETIÇÃO INICIAL"), page: 4, depth: 1, leaf: false },
+      { title: "Pág. 1", page: 4, depth: 2, leaf: true, parent: doc(1, 1, "PETIÇÃO INICIAL") },
+      { title: "Pág. 2", page: 5, depth: 2, leaf: true, parent: doc(1, 1, "PETIÇÃO INICIAL") },
+      { title: doc(1, 2, "PROCURAÇÃO"), page: 6, depth: 1, leaf: false },
+      { title: doc(1, 3, "OUTROS"), page: 7, depth: 1, leaf: false },
+      { title: doc(4, 1, "DESPACHO/DECISÃO"), page: 11, depth: 1, leaf: false },
+      { title: doc(5, 1, "PEDIDO DE LIMINAR/ANTECIPAÇÃO DE TUTELA"), page: 14, depth: 1, leaf: false },
+      { title: doc(6, 1, "CERTIDÃO AUTOMATIZADA DE MOTIVO DE NÃO RECOLHIMENTO"), page: 16, depth: 1, leaf: false },
+    ];
+    // posição dos textos na capa: as partes de cada polo ficam em alturas diferentes, então o texto sozinho as mistura
+    const seg = (x: number, y: number, w: number, text: string): LayoutSegment => ({ x, y, w, text });
+    const layout: LayoutSegment[][] = [
+      [],
+      [
+        seg(40, 673, 92, "Partes e Representantes"),
+        seg(144, 660, 49, "REQUERENTE"),
+        seg(404, 660, 44, "REQUERIDO"),
+        seg(310, 648, 225, "MUNICIPIO DE EXEMPLO (11.222.333/0001-81) - Entidade"),
+        seg(44, 645, 204, "MARIA FICTÍCIA DA SILVA (123.456.789-09) - Pessoa Física"),
+        seg(308, 639, 51, "Procurador(es):"),
+        seg(320, 631, 148, "CARLOS PROCURADOR MUNICIPAL PGM123456"),
+        seg(63, 628, 160, "ANA ADVOGADA EXEMPLO RJ123456"),
+        seg(310, 610, 144, "ESTADO EXEMPLAR - Pessoa Física"),
+        seg(44, 600, 170, "JOÃO COM NOME MUITO COMPRIDO DE"),
+        seg(310, 597, 209, "ESTADO EXEMPLAR (22.333.444/0001-55) - Entidade"),
+        seg(44, 592, 160, "EXEMPLO (987.654.321-00) - Pessoa Física"),
+        seg(308, 589, 51, "Procurador(es):"),
+        seg(320, 581, 150, "DIANA PROCURADORA ESTADUAL PGE7654321"),
+        seg(320, 573, 190, "PROCURADORIA DA 4ª REGIÃO (RJ000001)"),
+        seg(258, 561, 78, "MINISTÉRIO PÚBLICO"),
+        seg(175, 549, 257, "MINISTÉRIO PÚBLICO DO ESTADO EXEMPLAR (33.444.555/0001-66)"),
+        seg(40, 527, 86, "Informações Adicionais"),
+      ],
+    ];
+    const info = parseCaseFile(pages, { outline, layout });
+    expect(info).toMatchObject({
+      system: "eproc",
+      number: n,
+      className: "Procedimento Comum Cível",
+      body: "Juízo da 1ª Vara Cível da Comarca de Exemplo",
+      filedAt: "2026-03-02",
+      value: 5000000,
+      subjects: "Tratamento médico-hospitalar, Pública, DIREITO DA SAÚDE; Fornecimento de Medicamentos, Pública, DIREITO DA SAÚDE",
+      secret: false,
+      freeJustice: true,
+    });
+    expect(info.parties.map((p) => [p.name, p.role, p.pole, p.kind, p.lawyers])).toEqual([
+      ["Municipio de Exemplo", "Requerido", "passivo", "publico", ["Carlos Procurador Municipal (PGM123456)"]],
+      ["Maria Fictícia da Silva", "Requerente", "ativo", "pf", ["Ana Advogada Exemplo (RJ123456)"]],
+      ["Estado Exemplar", "Requerido", "passivo", "publico", ["Diana Procuradora Estadual (PGE7654321)", "Procuradoria da 4ª Região (RJ000001)"]],
+      ["João com Nome Muito Comprido de Exemplo", "Requerente", "ativo", "pf", []],
+      ["Ministério Público do Estado Exemplar", "Ministério Público", "terceiro", "publico", []],
+    ]);
+    expect(info.parties[2].doc).toBe("22.333.444/0001-55");
+
+    // tabela apertada: as duas colunas chegam num trecho só, e cada entrada vai para a sua coluna
+    const tight = parseCaseFile(pages, {
+      outline,
+      layout: [
+        [],
+        [
+          seg(40, 673, 92, "Partes e Representantes"),
+          seg(30, 660, 30, "AUTOR"),
+          seg(240, 660, 20, "RÉU"),
+          seg(30, 645, 420, "FULANO DE TAL (123.456.789-09) INSTITUTO NACIONAL DO SEGURO SOCIAL - INSS (29.979.036/0001-40)"),
+          seg(30, 630, 300, "Procurador(es): Procurador(es):"),
+          seg(30, 615, 400, "BELTRANA SILVA (RS012345) PROCURADORIA REGIONAL FEDERAL DA 4ª REGIÃO (RS000001)"),
+          seg(30, 600, 120, "CICLANO SOUZA (RS054321)"),
+          seg(40, 580, 86, "Informações Adicionais"),
+        ],
+      ],
+    });
+    expect(tight.parties.map((p) => [p.name, p.pole, p.lawyers])).toEqual([
+      ["Fulano de Tal", "ativo", ["Beltrana Silva (RS012345)", "Ciclano Souza (RS054321)"]],
+      ["Instituto Nacional do Seguro Social - INSS", "passivo", ["Procuradoria Regional Federal da 4ª Região (RS000001)"]],
+    ]);
+    expect(info.docs.map((d) => [d.courtId, d.title, d.type, d.pages, d.date])).toEqual([
+      [undefined, "Capa do processo", "outro", [1, 2], undefined],
+      ["Evento 1, INIC1", "Petição inicial (INIC1)", "inicial", [4, 5], "2026-03-02"],
+      ["Evento 1, PROC2", "Procuração (PROC2)", "procuracao", [6, 6], "2026-03-02"],
+      ["Evento 1, OUT3", "Laudo (OUT3)", "laudo", [7, 7], "2026-03-02"],
+      ["Evento 4, DESPADEC1", "Decisão interlocutória (DESPADEC1)", "decisao", [11, 12], "2026-03-05"],
+      ["Evento 5, PED LIMINAR_ANT TUTE1", "Pedido de liminar/antecipação de tutela", "peticao", [14, 14], "2026-03-10"],
+      ["Evento 6, CertAutMotNRec1", "Certidão automatizada de motivo de não recolhimento", "certidao", [16, 16], "2026-03-10"],
+    ]);
+    expect(info.docs[4].signer).toBe("Juíza Fictícia");
+    expect(info.part).toBe(1);
+    expect(info.events?.map((e) => [e.n, e.date, e.text])).toEqual([
+      [1, "2026-03-02", "Distribuído por sorteio EXE01VCIV1J"],
+      [2, "2026-03-02", "Autos incluídos no juízo 100% digital"],
+      [3, "2026-03-03", "Conclusos para decisão/despacho"],
+      [4, "2026-03-05", "Decisão interlocutória"],
+      [5, "2026-03-10", "Petição pedido de liminar/antecipação de tutela"],
+      [6, "2026-03-10", "Expedição de documento motivo do não recolhimento de custas justiça gratuita/pedido de gratuidade"],
+      [7, "2026-03-12", "Disponibilizado no DJEN no dia 12/03/2026 ref. ao evento 4"],
+    ]);
+
+    // sem os carimbos, os marcadores separam os mesmos documentos (sem as páginas de separação)
+    const unstamped = pages.map((p) => p.replace(/^Processo [^\n]*, Página \d+\n/, ""));
+    const byMarks = parseCaseFile(unstamped, { outline, layout });
+    expect(byMarks.docs.map((d) => [d.courtId, d.pages])).toEqual([
+      [undefined, [1, 2]],
+      ["Evento 1, Doc. 1", [4, 5]],
+      ["Evento 1, Doc. 2", [6, 6]],
+      ["Evento 1, Doc. 3", [7, 7]],
+      ["Evento 4, Doc. 1", [11, 12]],
+      ["Evento 5, Doc. 1", [14, 14]],
+      ["Evento 6, Doc. 1", [16, 16]],
+    ]);
+    expect(byMarks.docs[4].title).toBe("Decisão interlocutória");
+  });
+
+  it("o código verificador do eproc não faz o arquivo parecer do e-SAJ", () => {
+    const signed = "Documento assinado eletronicamente por FULANO, em 01/02/2026, informando o código verificador 190000000001v1 e o código CRC abcdef12.";
+    expect(parseCaseFile([`DECISÃO\n${signed}`, `DESPACHO\n${signed}`]).system).toBe("eproc");
+  });
 });
+

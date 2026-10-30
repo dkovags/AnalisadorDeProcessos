@@ -103,6 +103,49 @@ async function makeEprocPdf(path, number) {
   await renderPdf(path, pages);
 }
 
+/**
+ * PDF no formato do eproc do TJRJ: folha de rosto, capa com uma coluna por polo (e o Ministério Público à parte),
+ * página de separação antes de cada evento, carimbo no alto de cada página, códigos como "PED LIMINAR_ANT TUTE1" e um
+ * marcador por documento ("Evento 3 - Doc. 1 - DESPACHO/DECISÃO").
+ */
+async function makeEprocRjPdf(path, number) {
+  const stamp = (ev, doc, pag) => `<div style="font-size: 9px; margin-bottom: 8px">Processo ${number}/RJ, Evento ${ev}, ${doc}, Página ${pag}</div>`;
+  const mark = (ev, n, label) => `<h2 style="font-size: 10px; margin: 0 0 8px">Evento ${ev} - Doc. ${n} - ${label}</h2>`;
+  const separator = (ev, description, date) =>
+    ["PÁGINA DE SEPARAÇÃO", "(Gerada automaticamente pelo sistema.)", `Evento ${ev}`, "Evento:", description, "Data:", `${date} 10:00:00`, "Usuário:", "SISTEMA", "Processo:", `${number}/RJ`, "Sequência Evento:", ev]
+      .map((l) => `<p>${l}</p>`)
+      .join("");
+  const pages = [
+    `<p>Tipo documento: CAPA PROCESSO</p><p>Evento: abertura</p><p>PROCESSO</p><p>Nº ${number}</p><p>Capa: Parte 1</p>`,
+    `<p>Nº do processo ${number}</p><p>Classe da ação: Procedimento Comum Cível</p><p>Data de autuação: 02/03/2026 10:00:00</p>
+     <p>Órgão Julgador: Juízo da 1ª Vara Cível da Comarca de Exemplo</p>
+     <p><b>Assuntos</b></p>
+     <table><tr><th>Código</th><th>Descrição</th><th>Principal</th></tr><tr><td>1504050102</td><td>Tratamento médico-hospitalar, DIREITO DA SAÚDE</td><td>Sim</td></tr></table>
+     <p><b>Partes e Representantes</b></p>
+     <table style="width: 100%; font-size: 11px">
+       <tr><th style="width: 50%; text-align: center">REQUERENTE</th><th style="text-align: center">REQUERIDO</th></tr>
+       <tr><td style="padding-top: 5px">LÚCIA PACIENTE (123.456.789-09) - Pessoa Física<br>VOCÊ ADVOGADO RJ123456</td>
+         <td>MUNICÍPIO DE EXEMPLO (11.222.333/0001-81) - Entidade<br>Procurador(es):<br>CARLOS PROCURADOR MUNICIPAL PGM123456<br>ESTADO EXEMPLAR (22.333.444/0001-55) - Entidade<br>Procurador(es):<br>DIANA PROCURADORA ESTADUAL PGE7654321</td></tr>
+       <tr><th colspan="2" style="text-align: center; padding-top: 8px">MINISTÉRIO PÚBLICO</th></tr>
+       <tr><td colspan="2" style="text-align: center">MINISTÉRIO PÚBLICO DO ESTADO EXEMPLAR (33.444.555/0001-66)</td></tr>
+     </table>
+     <p><b>Informações Adicionais</b></p>
+     <p>Chave Processo: 123456789012 &nbsp; Valor da Causa: R$ 50.000,00 &nbsp; Nível de Sigilo do Processo: Sem Sigilo (Nível 0)</p><p>Justiça Gratuita: Deferida</p>`,
+    separator(1, "DISTRIBUIDO POR SORTEIO EXE01VCIV1J", "02/03/2026"),
+    `${stamp(1, "INIC1", 1)}${mark(1, 1, "PETIÇÃO INICIAL")}<p>EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO</p>
+     <p>LÚCIA PACIENTE vem propor ação de obrigação de fazer em face do MUNICÍPIO DE EXEMPLO e do ESTADO EXEMPLAR, para obter o tratamento prescrito.</p>`,
+    `${stamp(1, "INIC1", 2)}<p>Dos pedidos. Requer a tutela de urgência para o fornecimento do tratamento.</p>`,
+    `${stamp(1, "PROC2", 1)}${mark(1, 2, "PROCURAÇÃO")}<p>PROCURAÇÃO</p><p>Outorgante: LÚCIA PACIENTE. Outorgado: VOCÊ ADVOGADO.</p>`,
+    separator(2, "AUTOS INCLUIDOS NO JUIZO 100 DIGITAL", "02/03/2026"),
+    separator(3, "DECISAO INTERLOCUTORIA", "05/03/2026"),
+    `${stamp(3, "DESPADEC1", 1)}${mark(3, 1, "DESPACHO/DECISÃO")}<p>Defiro a tutela de urgência para determinar aos réus o fornecimento do tratamento, no prazo de 5 (cinco) dias.</p>
+     <p>Documento assinado eletronicamente por JUÍZA FICTÍCIA, Juíza de Direito , em 05/03/2026, às 18:00:00, conforme art. 1º, III, informando o código verificador 190000000001v1 e o código CRC abcdef12.</p>`,
+    separator(4, "PETICAO PEDIDO DE LIMINARANTECIPACAO DE TUTELA", "10/03/2026"),
+    `${stamp(4, "PED LIMINAR_ANT TUTE1", 1)}${mark(4, 1, "PEDIDO DE LIMINAR/ANTECIPAÇÃO DE TUTELA")}<p>Requer a intimação dos réus para cumprir a tutela deferida.</p>`,
+  ];
+  await renderPdf(path, pages, { outline: true });
+}
+
 const ACORDAO = `Superior Tribunal de Justiça
 AgInt no AGRAVO EM RECURSO ESPECIAL Nº 2.345.678 - RN (2025/0123456-7)
 RELATOR : MINISTRO JOÃO EXEMPLO
@@ -223,6 +266,38 @@ try {
   await page.getByText("Evento 22, DESPADEC1").waitFor();
   await shot(page, "09c-documentos-eproc");
 
+  // eproc do TJRJ: partes em colunas (o polo vem da posição na capa), páginas de separação e eventos nos andamentos
+  const rjNumber = cnj("3001234", "2026", "8", "19", "0001");
+  const rjPath = `${OUT}/processo-eproc-rj.pdf`;
+  await makeEprocRjPdf(rjPath, rjNumber);
+  await page.goto(URL + "#/processos");
+  await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
+  await page.locator(".modal input[type=file]").setInputFiles(rjPath);
+  await page.getByText("Conferir o processo").waitFor();
+  const rjRows = await page.locator(".doc-preview-row").allInnerTexts();
+  expect(rjRows.length === 5, `eproc RJ: esperava 5 documentos, veio ${rjRows.length}: ${rjRows.join(" | ")}`);
+  expect(
+    rjRows.some((r) => r.includes("Decisão interlocutória (DESPADEC1)") && r.includes("Evento 3, DESPADEC1") && r.includes("05/03/2026")),
+    `eproc RJ: decisão sem nome, evento ou data: ${rjRows.join(" | ")}`,
+  );
+  expect(rjRows.some((r) => r.includes("Pedido de liminar/antecipação de tutela") && r.includes("Evento 4, PED LIMINAR_ANT TUTE1")), `eproc RJ: pedido de liminar: ${rjRows.join(" | ")}`);
+  const parties = (await page.locator(".client-pick label").allInnerTexts()).map((p) => p.replace(/\s+/g, " ").trim());
+  expect(
+    parties.some((p) => /^Município de Exemplo \(Requerido · polo passivo\) · ente público, prazo em dobro · procurador: Carlos Procurador Municipal \(PGM123456\)/.test(p)),
+    `eproc RJ: município fora do polo passivo ou sem procurador: ${parties.join(" | ")}`,
+  );
+  expect(parties.some((p) => /^Lúcia Paciente \(Requerente · polo ativo\) · procurador: Você Advogado \(RJ123456\)/.test(p)), `eproc RJ: requerente: ${parties.join(" | ")}`);
+  expect(parties.some((p) => p.startsWith("Ministério Público do Estado Exemplar (Ministério Público")), `eproc RJ: Ministério Público: ${parties.join(" | ")}`);
+  await page.getByText("4 movimentações (eventos) entram nos andamentos do processo.").waitFor();
+  await shot(page, "09d-importar-eproc-rj");
+  await page.getByRole("button", { name: "Criar o processo" }).click();
+  await closed(page);
+  await page.getByRole("heading", { name: "Lúcia Paciente x Município de Exemplo" }).waitFor();
+  await page.getByRole("tab", { name: /Andamentos/ }).click();
+  await page.getByText("Evento 2: Autos incluídos no juízo 100% digital").waitFor();
+  await page.getByRole("button", { name: "Evento 3: Decisão interlocutória" }).waitFor();
+  await shot(page, "09e-andamentos-eproc-rj");
+
   // PDF de outro sistema, sem carimbo: os marcadores (índice) do PDF separam os documentos
   const marksPath = `${OUT}/processo-marcadores.pdf`;
   await renderPdf(
@@ -320,7 +395,7 @@ try {
   await page.getByRole("button", { name: "Salvar" }).click();
   await closed(page);
   await page.getByText("Cliente avisada da réplica por telefone.").waitFor();
-  await page.getByText(/Despacho: Despacho/).waitFor();
+  await page.locator(".timeline").getByRole("button", { name: "Despacho", exact: true }).waitFor();
   await shot(page, "16-andamentos");
 
   await page.goto(URL + "#/processos");
@@ -364,7 +439,7 @@ try {
   await page.reload();
   await page.goto(URL + "#/processos");
   await page.getByText("Ana Cliente x Telefonia Gama S.A.").waitFor();
-  expect((await page.locator(".case-row").count()) === 4, "processos não ficaram guardados");
+  expect((await page.locator(".case-row").count()) === 5, "processos não ficaram guardados");
   await page.getByText("Ana Cliente x Telefonia Gama S.A.").click();
   await page.getByRole("tab", { name: /Documentos/ }).click();
   await page.getByLabel("Pesquisar nos documentos do processo").fill("negativação");

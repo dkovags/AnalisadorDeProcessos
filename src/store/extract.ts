@@ -15,6 +15,15 @@ export interface OutlineItem {
   parent?: string;
 }
 
+/** Trecho de uma linha com a posição na página (em pontos, a partir do canto inferior esquerdo). */
+export interface TextSegment {
+  x: number;
+  y: number;
+  /** Largura. */
+  w: number;
+  text: string;
+}
+
 export interface Extracted {
   pages: string[];
   /** Páginas sem texto (imagem digitalizada). */
@@ -22,7 +31,15 @@ export interface Extracted {
   kind: "pdf" | "docx" | "odt" | "html" | "text" | "image" | "other";
   /** Marcadores do PDF, quando o arquivo tem índice (o eproc e outros sistemas geram um por documento). */
   outline?: OutlineItem[];
+  /**
+   * Posição dos trechos de texto nas primeiras páginas (a capa), para ler tabelas em colunas, como as partes de cada
+   * polo no eproc. Só serve na importação: não é guardado.
+   */
+  layout?: TextSegment[][];
 }
+
+/** Páginas do começo do PDF cuja posição dos textos é guardada em `layout`. */
+const LAYOUT_PAGES = 4;
 
 interface TextItemLike {
   str: string;
@@ -32,10 +49,18 @@ interface TextItemLike {
   hasEOL?: boolean;
 }
 
-/** Junta os pedaços de texto do pdf.js em linhas, na ordem de leitura (de cima para baixo, da esquerda para a direita). */
-export function itemsToText(raw: unknown[]): string {
+interface Piece {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  s: string;
+}
+
+/** Pedaços de texto do pdf.js agrupados em linhas, de cima para baixo, cada linha da esquerda para a direita. */
+function textLines(raw: unknown[]): { lines: { y: number; h: number; parts: Piece[] }[]; rotated: string[] } {
   const items = raw.filter((i): i is TextItemLike => typeof (i as TextItemLike).str === "string" && Array.isArray((i as TextItemLike).transform));
-  const flat: { x: number; y: number; w: number; h: number; s: string }[] = [];
+  const flat: Piece[] = [];
   const rotated: string[] = [];
   for (const it of items) {
     const [a, b, , d, e, f] = it.transform;
@@ -56,9 +81,15 @@ export function itemsToText(raw: unknown[]): string {
     else lines.push({ y: it.y, h: it.h, parts: [it] });
   }
   lines.sort((p, q) => q.y - p.y);
+  for (const line of lines) line.parts.sort((p, q) => p.x - q.x);
+  return { lines, rotated };
+}
+
+/** Junta os pedaços de texto do pdf.js em linhas, na ordem de leitura (de cima para baixo, da esquerda para a direita). */
+export function itemsToText(raw: unknown[]): string {
+  const { lines, rotated } = textLines(raw);
   const out: string[] = [];
   for (const line of lines) {
-    line.parts.sort((p, q) => p.x - q.x);
     let s = "";
     let end = -Infinity;
     for (const p of line.parts) {
@@ -72,6 +103,32 @@ export function itemsToText(raw: unknown[]): string {
   if (rotated.length) out.push(rotated.join(" "));
   // palavras partidas no fim da linha ("indeniza-\nção")
   return out.join("\n").replace(/([a-zà-ú])-\n([a-zà-ú])/g, "$1$2");
+}
+
+/** Trechos de cada linha com a posição: um vão largo entre dois pedaços (outra coluna da tabela) começa outro trecho. */
+export function itemsToSegments(raw: unknown[]): TextSegment[] {
+  const out: TextSegment[] = [];
+  for (const line of textLines(raw).lines) {
+    let cur: { x: number; end: number; s: string } | null = null;
+    const flush = () => {
+      if (cur && cur.s.trim()) out.push({ x: cur.x, y: line.y, w: cur.end - cur.x, text: cur.s.replace(/\s+/g, " ").trim() });
+    };
+    for (const p of line.parts) {
+      // espaços em branco largos (o vão entre duas colunas) não juntam os trechos
+      if (!p.s.trim()) continue;
+      const gap = cur ? p.x - cur.end : Infinity;
+      if (cur && gap <= Math.max(8, p.h * 1.2)) {
+        if (gap > p.h * 0.18 && !/\s$/.test(cur.s) && !/^\s/.test(p.s)) cur.s += " ";
+        cur.s += p.s;
+        cur.end = Math.max(cur.end, p.x + p.w);
+      } else {
+        flush();
+        cur = { x: p.x, end: p.x + p.w, s: p.s };
+      }
+    }
+    flush();
+  }
+  return out;
 }
 
 interface OutlineNode {
@@ -129,18 +186,20 @@ export async function extractPdf(data: Uint8Array, pdfjs: PdfJs, onProgress?: (d
   const doc = await task.promise;
   const pages: string[] = [];
   const empty: number[] = [];
+  const layout: TextSegment[][] = [];
   try {
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
       const tc = await page.getTextContent();
       const text = itemsToText(tc.items);
+      if (n <= LAYOUT_PAGES) layout.push(itemsToSegments(tc.items));
       pages.push(text);
       if (text.replace(/\s/g, "").length < 15) empty.push(n);
       page.cleanup();
       onProgress?.(n, doc.numPages);
     }
     const outline = await readOutline(doc);
-    return { pages, empty, kind: "pdf", outline: outline.length ? outline : undefined };
+    return { pages, empty, kind: "pdf", outline: outline.length ? outline : undefined, layout };
   } finally {
     await task.destroy();
   }

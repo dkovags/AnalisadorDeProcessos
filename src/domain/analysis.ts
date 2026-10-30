@@ -601,6 +601,7 @@ export function classifyText(text: string): DocType {
 export function docTypeFromLabel(label: string): DocType | undefined {
   const f = fold(label);
   const table: [RegExp, DocType][] = [
+    [/emenda/, "peticao"],
     [/peticao inicial|\binicial\b/, "inicial"],
     [/contrarrazoes/, "contrarrazoes"],
     [/contestacao|defesa/, "contestacao"],
@@ -622,7 +623,7 @@ export function docTypeFromLabel(label: string): DocType | undefined {
     [/identificacao|identidade|\brg\b|\bcpf\b|\bcnh\b|pessoais/, "pessoal"],
     [/comprovante|guia|custas|boleto|recibo|deposito/, "comprovante"],
     [/contrato/, "contrato"],
-    [/peticao|manifestacao|requerimento|juntada/, "peticao"],
+    [/peticao|manifestacao|requerimento|juntada|pedido/, "peticao"],
   ];
   for (const [re, t] of table) if (re.test(f)) return t;
   return undefined;

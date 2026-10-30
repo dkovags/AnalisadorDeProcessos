@@ -14,7 +14,7 @@ aplicativo e funciona sem internet.
   classe, órgão julgador, valor da causa, rito dos prazos (cível, juizado, trabalhista ou penal) e situação (em
   andamento, aguardando manifestação, concluso, sentenciado, em grau de recurso, transitado em julgado, cumprimento de
   sentença, suspenso, arquivado...). Cada mudança de situação fica nos andamentos, junto com as anotações, os
-  documentos juntados e as petições protocoladas.
+  documentos juntados, as petições protocoladas e, no eproc, as movimentações (eventos) lidas do processo.
 - **Expedientes de cada parte**: intimações, citações, notificações e vistas, com os destinatários, o meio (DJEN, diário
   do tribunal, sistema, Domicílio Judicial Eletrônico, correio, oficial de justiça, *e-mail*, audiência, edital), as
   datas e o prazo. A aba de prazos do processo mostra, para cada parte, os expedientes em aberto, o último e o próximo
@@ -44,10 +44,14 @@ aplicativo e funciona sem internet.
   órgão julgador, distribuição ou autuação, valor, assuntos, sigilo, justiça gratuita), as partes com os advogados ou
   procuradores e cada documento separado, com nome, tipo, data e quem assinou:
   - no **PJe**, pelo carimbo "Num. Id - Pág." de cada página, com o índice de documentos da capa;
-  - no **eproc**, pelo evento e pelo código do documento (INIC1, PROC2, CONTES1, DESPADEC1...) que aparecem nas
-    páginas ou, sem eles, pelos marcadores (índice) do PDF; as partes e os procuradores vêm do quadro "Partes e
-    Representantes" da capa, e as datas, da tabela de eventos. Cada documento fica com a referência "Evento 15,
-    CONTES1", do jeito que se cita nos autos;
+  - no **eproc**, pelo carimbo de cada página, com o evento e o código do documento (INIC1, PROC2, DESPADEC1, e também
+    códigos como "PED LIMINAR_ANT TUTE1"), ou, sem ele, pelos marcadores (índice) do PDF. O nome de cada documento vem
+    dos marcadores ("Evento 1 - Doc. 2 - PROCURAÇÃO"); as datas e as descrições dos eventos, das páginas de separação
+    (ou da tabela de eventos da capa), e as páginas de separação ficam fora dos documentos. Do quadro "Partes e
+    Representantes", o Analisador de Processos tira o polo de cada parte pela coluna em que ela aparece, os procuradores
+    (com a OAB ou o código da procuradoria) e o tipo de pessoa: o ente público já entra com o prazo em dobro. Cada
+    documento fica com a referência "Evento 15, CONTES1", do jeito que se cita nos autos, e as movimentações entram
+    nos andamentos;
   - no **e-SAJ**, pelo código da pasta digital;
   - em outros sistemas, pelos marcadores do PDF, quando houver.
 
@@ -122,8 +126,8 @@ npm run build            # gera a versão publicada em dist/
 npm run test:e2e         # teste completo no navegador (gera capturas em screenshots/)
 ```
 
-O teste de ponta a ponta monta PDFs nos formatos do PJe e do eproc e um com marcadores, importa cada um pela tela e
-passa por todas as funções. Para usar um Chromium já instalado nele e na geração dos ícones
+O teste de ponta a ponta monta PDFs nos formatos do PJe e do eproc (dois modelos de capa, um deles o do TJRJ) e um com
+marcadores, importa cada um pela tela e passa por todas as funções. Para usar um Chromium já instalado nele e na geração dos ícones
 (`node scripts/make-icons.mjs public "#24406b"`), informe o caminho em `CHROMIUM_PATH`.
 
 Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/manifest.webmanifest`.
@@ -135,10 +139,10 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
   fica mais curto, nunca mais longo); cadastre os feriados e as suspensões do seu tribunal em **Configurações**.
 - A leitura de expedientes, processos e acórdãos é feita por regras, sem inteligência artificial: o resultado é uma
   sugestão que você confirma antes de salvar.
-- A leitura do eproc segue o formato conhecido do processo completo (capa com "Partes e Representantes", tabela de
-  eventos e códigos dos documentos) e os marcadores do PDF, e foi testada com arquivos montados nesse formato. A capa
-  pode variar entre os tribunais que usam o eproc; se algo não for reconhecido, o processo inteiro fica guardado como
-  um documento só, pesquisável do mesmo jeito, e as partes podem ser completadas à mão.
+- A leitura do eproc foi ajustada com um processo real do TJRJ e testada com arquivos montados no formato de outros
+  tribunais. A capa pode variar entre os tribunais que usam o eproc; se algo não for reconhecido, o processo inteiro
+  fica guardado como um documento só, pesquisável do mesmo jeito, e as partes podem ser completadas à mão. Quando o
+  eproc divide o *download* em partes ("Parte 1", "Parte 2"...), importe cada parte no mesmo processo.
 - Páginas digitalizadas sem texto (imagem) ficam guardadas, mas não entram na pesquisa: o Analisador de Processos avisa quando isso
   acontece. Prefira baixar o processo com texto (OCR) no sistema do tribunal.
 - A verificação de citações não consulta os tribunais: "fora da base" quer dizer que a decisão ainda não foi
