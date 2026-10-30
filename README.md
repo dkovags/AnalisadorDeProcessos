@@ -7,6 +7,8 @@ a jurisprudência usada nas petições, com as partes de cada julgado e a verifi
 baixado do PJe, do eproc e do e-SAJ. Funciona no navegador do computador e do celular, pode ser instalado como
 aplicativo e funciona sem internet.
 
+**Endereço:** https://dkovags.github.io/AnalisadorDeProcessos/
+
 ## O que ele faz
 
 - **Processos e situação**: número CNJ com conferência do dígito verificador e do tribunal, partes por polo (com o
