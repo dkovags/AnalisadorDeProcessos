@@ -1,0 +1,19 @@
+# Temporário: apaga as duas execuções do CI que apontam para o histórico antigo. A branch é apagada em seguida.
+name: Limpeza do CI
+on:
+  push:
+    branches: [limpeza-ci]
+permissions:
+  actions: write
+jobs:
+  limpar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apagar as execuções antigas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in 41084116658 41127349397; do
+            gh api -X DELETE "repos/${{ github.repository }}/actions/runs/$id"
+            echo "apagada: $id"
+          done
