@@ -1,7 +1,11 @@
 // Intermediário do Analisador de Processos para as APIs públicas do CNJ.
 // Roda no AWS Lambda em São Paulo, de onde o DJEN aceita consultas (ele recusa acessos de fora do Brasil), e devolve
 // as respostas ao aplicativo. Só repassa consultas ao DJEN e ao DataJud, e só para quem manda a senha certa no
-// cabeçalho "x-chave" (a senha fica na variável de ambiente CHAVE da função).
+// cabeçalho "x-chave".
+
+// SENHA: ao colar este código no console da AWS, escreva a sua senha entre as aspas abaixo (não a publique aqui no
+// GitHub). Se preferir, deixe vazio e use a variável de ambiente CHAVE da função.
+const SENHA = "";
 
 const DJEN = "https://comunicaapi.pje.jus.br/api/v1/comunicacao";
 const DATAJUD = "https://api-publica.datajud.cnj.jus.br";
@@ -39,4 +43,4 @@ export async function responder(event, { chave, fetch: fetchFn }) {
   }
 }
 
-export const handler = (event) => responder(event, { chave: process.env.CHAVE, fetch: globalThis.fetch });
+export const handler = (event) => responder(event, { chave: SENHA || process.env.CHAVE, fetch: globalThis.fetch });

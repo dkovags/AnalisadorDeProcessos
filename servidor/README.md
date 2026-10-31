@@ -17,12 +17,12 @@ alerta de gasto (passo 6) avisa se algo mudar.
 2. **Crie a função:** escolha **Criar do zero**, dê o nome `analisador-cnj`, escolha o tempo de execução
    **Node.js 22.x** e clique em **Criar função**.
 3. **Cole o código:** na aba **Código**, abra o arquivo `index.mjs`, apague o conteúdo e cole o código de
-   [`aws-lambda/index.mjs`](aws-lambda/index.mjs) (no GitHub, o botão de copiar fica no alto do arquivo). Clique em
-   **Deploy** (Implantar).
-4. **Ajuste a função,** na aba **Configuração**:
-   - em **Configuração geral**, clique em **Editar**, ponha o **Tempo limite** em 20 segundos e salve;
-   - em **Variáveis de ambiente**, clique em **Editar**, depois em **Adicionar variável de ambiente**: chave `CHAVE`,
-     valor uma senha longa só sua (por exemplo, 30 letras e números misturados), e salve.
+   [`aws-lambda/index.mjs`](aws-lambda/index.mjs) (no GitHub, o botão de copiar fica no alto do arquivo). Na linha
+   `const SENHA = "";`, escreva entre as aspas uma senha longa só sua (por exemplo, 30 letras e números misturados).
+   Clique em **Deploy** (Implantar).
+4. **Ajuste o tempo limite,** na aba **Configuração**: em **Configuração geral**, clique em **Editar**, ponha o
+   **Tempo limite** em 20 segundos e salve. Em vez de escrever a senha no código, dá para guardá-la em
+   **Variáveis de ambiente**, com a chave `CHAVE`.
 5. **Crie o endereço público:** em **URL da função**, clique em **Criar URL da função**, escolha o tipo de autenticação
    **NONE** e marque a opção de configurar o **CORS**:
    - origem permitida: `https://dkovags.github.io`
