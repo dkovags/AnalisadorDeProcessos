@@ -5,7 +5,7 @@
 
 // SENHA: ao colar este código no console da AWS, escreva a sua senha entre as aspas abaixo (não a publique aqui no
 // GitHub). Se preferir, deixe vazio e use a variável de ambiente CHAVE da função.
-const SENHA = "";
+const SENHA = "LgoOdSx5S6h3QWZ6A3mE9cpbmnwjnnMY";
 
 const DJEN = "https://comunicaapi.pje.jus.br/api/v1/comunicacao";
 const DATAJUD = "https://api-publica.datajud.cnj.jus.br";
