@@ -1,4 +1,4 @@
-import { CalendarX, DatabaseBackup, Download, HardDrive, Moon, Plus, Trash, Upload } from "lucide-react";
+import { CalendarX, DatabaseBackup, Download, Globe, HardDrive, Moon, Plus, Trash, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { APP_NAME } from "../../config";
 import { makeCalendar, yearHolidays } from "../../domain/calendar";
@@ -6,9 +6,10 @@ import { addDays, formatDate, formatDateWeek, parts } from "../../domain/dates";
 import type { CitationStyle, Holiday, Prefs } from "../../domain/types";
 import * as A from "../../store/actions";
 import { makeBackup, readBackup } from "../../store/backup";
+import { cnjReport, REACH_TEXT, testCnj, type ApiCheck } from "../../store/cnjapi";
 import { emptyDataset } from "../../store/dataset";
 import { persistStorage, storageInfo } from "../../store/ingest";
-import { Field, fileSize } from "../components/basics";
+import { CopyButton, Field, fileSize } from "../components/basics";
 import { STYLE_LABEL } from "../components/PrecedentCard";
 import { PageHeader } from "../components/Shell";
 import { useData, useRun, useStore, useToday, useUI } from "../context";
@@ -71,6 +72,52 @@ function HolidayForm() {
         <Plus size={16} /> Incluir
       </button>
     </div>
+  );
+}
+
+/** Testa se as APIs públicas do CNJ (DJEN e DataJud) aceitam consultas feitas direto deste site. */
+function CnjTest() {
+  const today = useToday();
+  const [busy, setBusy] = useState(false);
+  const [checks, setChecks] = useState<ApiCheck[] | null>(null);
+  return (
+    <section className="card pad stack">
+      <h2>
+        <Globe size={18} /> Busca automática no CNJ (em teste)
+      </h2>
+      <p className="muted small">
+        Para buscar sozinho as intimações publicadas no DJEN e os andamentos do DataJud, o {APP_NAME} precisa que as APIs públicas do CNJ aceitem consultas
+        feitas direto deste site. O teste faz uma consulta de exemplo, sem nenhum dado seu, e mostra o resultado.
+      </p>
+      <div className="row">
+        <button
+          className="btn btn-ghost"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              setChecks(await testCnj(today));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Testando…" : "Testar conexão com o CNJ"}
+        </button>
+        {checks && <CopyButton text={cnjReport(checks, today)} label="Copiar o resultado" />}
+      </div>
+      {checks && (
+        <ul className="cnj-checks">
+          {checks.map((c) => (
+            <li key={c.api}>
+              <strong>{c.api}:</strong> {REACH_TEXT[c.reach]}
+              {c.status ? ` (HTTP ${c.status})` : ""}
+              {!!c.fields?.length && <div className="muted small">campos: {c.fields.join(", ")}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -252,6 +299,8 @@ export function SettingsPage() {
             </select>
           </Field>
         </section>
+
+        <CnjTest />
 
         <section className="card pad stack">
           <h2>

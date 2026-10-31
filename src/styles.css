@@ -2645,3 +2645,13 @@ body.modal-open .toasts {
   color: var(--ok);
   vertical-align: -2px;
 }
+
+/* ---------- teste de conexão com o CNJ ---------- */
+
+.cnj-checks {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}

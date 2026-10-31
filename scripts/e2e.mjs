@@ -24,7 +24,8 @@ const shot = async (page, name) => {
 };
 function watch(page) {
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
-  page.on("console", (m) => m.type() === "error" && errors.push(`console: ${m.text()}`));
+  // falhas de rede nas consultas ao CNJ (teste de conexão) dependem da rede onde o teste roda: não contam como erro do app
+  page.on("console", (m) => m.type() === "error" && !/jus\.br/.test(m.location()?.url || "") && errors.push(`console: ${m.text()} (${m.location()?.url || ""})`));
 }
 const closed = (page) => page.locator(".overlay").first().waitFor({ state: "detached" });
 function expect(cond, msg) {
@@ -366,6 +367,10 @@ try {
   await page.goto(URL + "#/configuracoes");
   const [zip] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Fazer cópia de segurança/ }).click()]);
   expect(statSync(await zip.path()).size > 2000, "cópia de segurança vazia");
+  // teste de conexão com o CNJ: mostra um resultado para cada API, funcione ou não a rede
+  await page.getByRole("button", { name: "Testar conexão com o CNJ" }).click();
+  await page.locator(".cnj-checks li").nth(1).waitFor({ timeout: 60000 });
+  await page.getByRole("button", { name: "Copiar o resultado" }).waitFor();
   await shot(page, "15-configuracoes");
 
   // feriado local do TJRN no dia do vencimento: o prazo passa para o próximo dia útil
