@@ -3,9 +3,8 @@
 // as respostas ao aplicativo. Só repassa consultas ao DJEN e ao DataJud, e só para quem manda a senha certa no
 // cabeçalho "x-chave".
 
-// SENHA: ao colar este código no console da AWS, escreva a sua senha entre as aspas abaixo (não a publique aqui no
-// GitHub). Se preferir, deixe vazio e use a variável de ambiente CHAVE da função.
-const SENHA = "LgoOdSx5S6h3QWZ6A3mE9cpbmnwjnnMY";
+// A senha fica na variável de ambiente CHAVE da função (Configuração → Variáveis de ambiente), nunca neste arquivo:
+// ele é público no GitHub.
 
 const DJEN = "https://comunicaapi.pje.jus.br/api/v1/comunicacao";
 const DATAJUD = "https://api-publica.datajud.cnj.jus.br";
@@ -29,8 +28,8 @@ export async function responder(event, { chave, fetch: fetchFn }) {
     if (path === "/djen" && method === "GET") {
       return relay(await fetchFn(`${DJEN}?${event.rawQueryString || ""}`, { headers: { Accept: "application/json" } }));
     }
-    // DataJud: movimentações; o caminho diz o tribunal ("/datajud/api_publica_tjrj")
-    const m = path.match(/^\/datajud\/(api_publica_[a-z0-9]+)$/);
+    // DataJud: movimentações; o caminho diz o tribunal ("/datajud/api_publica_tjrj", "/datajud/api_publica_tre-sp")
+    const m = path.match(/^\/datajud\/(api_publica_[a-z0-9]+(?:-[a-z]{2})?)$/);
     if (m && method === "POST") {
       const body = event.isBase64Encoded ? Buffer.from(event.body || "", "base64").toString("utf8") : event.body || "";
       return relay(
@@ -43,4 +42,4 @@ export async function responder(event, { chave, fetch: fetchFn }) {
   }
 }
 
-export const handler = (event) => responder(event, { chave: SENHA || process.env.CHAVE, fetch: globalThis.fetch });
+export const handler = (event) => responder(event, { chave: process.env.CHAVE, fetch: globalThis.fetch });

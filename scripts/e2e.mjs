@@ -24,8 +24,8 @@ const shot = async (page, name) => {
 };
 function watch(page) {
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
-  // falhas de rede nas consultas ao CNJ (teste de conexão) dependem da rede onde o teste roda: não contam como erro do app
-  page.on("console", (m) => m.type() === "error" && !/jus\.br/.test(m.location()?.url || "") && errors.push(`console: ${m.text()} (${m.location()?.url || ""})`));
+  // respostas de erro do intermediário simulado (senha errada, de propósito) não contam como erro do app
+  page.on("console", (m) => m.type() === "error" && !/intermediario\.exemplo/.test(m.location()?.url || "") && errors.push(`console: ${m.text()} (${m.location()?.url || ""})`));
 }
 const closed = (page) => page.locator(".overlay").first().waitFor({ state: "detached" });
 function expect(cond, msg) {
@@ -367,10 +367,6 @@ try {
   await page.goto(URL + "#/configuracoes");
   const [zip] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Fazer cópia de segurança/ }).click()]);
   expect(statSync(await zip.path()).size > 2000, "cópia de segurança vazia");
-  // teste de conexão com o CNJ: mostra um resultado para cada API, funcione ou não a rede
-  await page.getByRole("button", { name: "Testar conexão com o CNJ" }).click();
-  await page.locator(".cnj-checks li").nth(1).waitFor({ timeout: 60000 });
-  await page.getByRole("button", { name: "Copiar o resultado" }).waitFor();
   await shot(page, "15-configuracoes");
 
   // feriado local do TJRN no dia do vencimento: o prazo passa para o próximo dia útil
@@ -449,6 +445,101 @@ try {
   await page.getByRole("tab", { name: /Documentos/ }).click();
   await page.getByLabel("Pesquisar nos documentos do processo").fill("negativação");
   await page.locator(".result").first().waitFor();
+
+  // busca no DJEN e no DataJud pelo intermediário (simulado aqui, com dados fictícios)
+  const novo = cnj("0809999", "2026", "8", "19", "0001");
+  const cnjCalls = [];
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "x-chave, content-type", "access-control-allow-methods": "GET, POST" };
+  const reply = (route, status, body) => route.fulfill({ status, headers: cors, contentType: "application/json", body: JSON.stringify(body) });
+  const djenItem = (id, numero, nome, polo, texto, tipoDocumento = "Despacho") => ({
+    id,
+    data_disponibilizacao: "2026-10-28",
+    siglaTribunal: numero === novo ? "TJRJ" : "TJRN",
+    tipoComunicacao: "Intimação",
+    tipoDocumento,
+    nomeOrgao: numero === novo ? "3ª Vara Cível da Comarca de Exemplo" : "5ª Vara Cível da Comarca de Mossoró",
+    nomeClasse: "PROCEDIMENTO COMUM CíVEL",
+    texto,
+    numeroprocessocommascara: numero,
+    meio: "D",
+    ativo: true,
+    destinatarios: [{ nome, polo }],
+    destinatarioadvogados: [{ advogado: { nome: "VOCÊ ADVOGADO", numero_oab: "123456", uf_oab: "RJ" } }],
+  });
+  await page.route("https://intermediario.exemplo/**", async (route) => {
+    const req = route.request();
+    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (req.headers()["x-chave"] !== "senha-teste") return reply(route, 401, { erro: "Senha ausente ou errada." });
+    const u = new globalThis.URL(req.url());
+    cnjCalls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams) });
+    if (u.pathname === "/djen")
+      return reply(route, 200, {
+        status: "success",
+        items:
+          u.searchParams.get("dataDisponibilizacaoInicio") === u.searchParams.get("dataDisponibilizacaoFim")
+            ? []
+            : [
+                djenItem(9001, novo, "CARLOS NOVO CLIENTE", "A", "Intime-se a parte autora para, no prazo de 15 (quinze) dias, apresentar réplica à contestação."),
+                djenItem(9002, number, "ANA CLIENTE", "A", "Intime-se a parte autora para se manifestar sobre o laudo pericial, no prazo de 15 dias."),
+              ],
+      });
+    if (u.pathname === "/datajud/api_publica_tjrj")
+      return reply(route, 200, {
+        hits: {
+          hits: [
+            {
+              _source: {
+                numeroProcesso: novo.replace(/\D/g, ""),
+                dataHoraUltimaAtualizacao: "2026-10-30T10:00:00.000Z",
+                movimentos: [
+                  { codigo: 26, nome: "Distribuição", dataHora: "2026-10-01T09:00:00.000Z" },
+                  { codigo: 51, nome: "Conclusão", dataHora: "2026-10-27T15:30:00.000Z" },
+                ],
+              },
+            },
+          ],
+        },
+      });
+    return reply(route, 404, { erro: "Caminho desconhecido." });
+  });
+  await page.goto(URL + "#/configuracoes");
+  await page.getByLabel("Endereço do intermediário").fill("https://intermediario.exemplo/");
+  await page.getByLabel("Senha do intermediário").fill("senha-errada");
+  await page.getByLabel("OAB (número)").fill("123456");
+  await page.getByLabel("UF da OAB").selectOption("RJ");
+  await page.getByRole("button", { name: "Testar a conexão" }).click();
+  await page.getByText(/O intermediário recusou a senha/).waitFor();
+  await page.getByLabel("Senha do intermediário").fill("senha-teste");
+  await page.getByRole("button", { name: "Testar a conexão" }).click();
+  await page.getByText(/Conexão funcionando/).waitFor();
+  await page.getByRole("button", { name: "Buscar intimações agora" }).click();
+  await page.getByText(/2 comunicações encontradas; 2 intimações novas registradas, 1 processo cadastrado/).waitFor();
+  const busca = cnjCalls.filter((c) => c.path === "/djen").at(-1).q;
+  expect(busca.numeroOab === "123456" && busca.ufOab === "RJ" && busca.itensPorPagina === "100", `consulta ao DJEN inesperada: ${JSON.stringify(busca)}`);
+  await shot(page, "24-busca-djen");
+
+  // as intimações registradas pedem conferência: a do processo novo traz a réplica com 15 dias
+  await page.goto(URL + "#/");
+  await page.getByText("2 intimações do DJEN para conferir.").waitFor();
+  await shot(page, "25-painel-djen");
+  await page.locator(".banner-actions button", { hasText: "Carlos Novo Cliente" }).click();
+  await page.getByText(/Registrado pela busca no DJEN/).waitFor();
+  expect((await page.getByRole("textbox", { name: "Ato a praticar", exact: true }).inputValue()) === "Réplica", "ato da intimação do DJEN não foi lido");
+  await shot(page, "26-conferir-djen");
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await closed(page);
+  await page.getByText("1 intimação do DJEN para conferir.").waitFor();
+
+  // andamentos do DataJud no processo cadastrado pela busca
+  await page.goto(URL + "#/processos");
+  await page.getByText("Carlos Novo Cliente").first().click();
+  await page.getByRole("tab", { name: /Andamentos/ }).click();
+  await page.getByRole("button", { name: "Atualizar andamentos (DataJud)" }).click();
+  await page.getByText(/2 andamentos novos no DataJud/).waitFor();
+  await page.locator(".timeline").getByText("Conclusão", { exact: true }).waitFor();
+  await shot(page, "27-andamentos-datajud");
+  await page.getByRole("tab", { name: /Expedientes e prazos/ }).click();
+  await page.locator(".item-card", { hasText: "Réplica" }).first().waitFor();
 
   // tema escuro
   await page.goto(URL + "#/configuracoes");

@@ -83,13 +83,22 @@ aplicativo e funciona sem internet.
   ainda não têm todos os documentos; o navegador avisa dos prazos do dia quando o Analisador de Processos é aberto; o ícone do aplicativo
   instalado mostra quantos prazos venceram ou vencem hoje; e os prazos e audiências podem ser exportados para o Google
   Agenda, o Outlook ou o calendário do celular (arquivo .ics, com lembrete).
+- **Busca automática no DJEN e no DataJud**: com o intermediário no Brasil configurado (veja abaixo), o Analisador de
+  Processos busca as comunicações publicadas para a sua OAB no Diário de Justiça Eletrônico Nacional, sozinho ao abrir
+  (uma vez por dia) ou pelo botão em **Configurações**. Cada intimação vira um expediente com o meio DJEN e a data da
+  disponibilização, o ato, o prazo e as providências lidos do texto, marcado para você conferir; o processo que não
+  estava na base é cadastrado com as partes da comunicação, e a lista de distribuição entra nos andamentos. Não repete
+  o que já foi registrado nem o que você apagou. Na aba **Andamentos**, o botão **Atualizar andamentos (DataJud)** traz
+  as movimentações do processo registradas pelo tribunal no DataJud.
 - **Planilha e cópia de segurança**: a lista de processos sai em planilha (.csv) para o Excel, e a cópia de segurança
   é um .zip com os dados, os arquivos originais e o texto já lido, que restaura tudo em outro aparelho.
 
 ## Onde ficam os dados
 
 Tudo fica guardado só no navegador do aparelho (IndexedDB): processos, documentos e jurisprudência não vão para a
-internet, e a leitura dos PDFs e as análises são feitas no próprio navegador. Por isso:
+internet, e a leitura dos PDFs e as análises são feitas no próprio navegador. A exceção é a busca no DJEN e no
+DataJud, quando ligada: ela manda ao intermediário (e dele ao CNJ) o número da OAB, as datas da busca e os números dos
+processos. O endereço e a senha do intermediário ficam nas configurações e vão junto na cópia de segurança. Por isso:
 
 - faça a cópia de segurança com frequência (**Configurações > Fazer cópia de segurança**) e guarde o .zip num lugar
   seguro: se os dados do navegador forem apagados, só a cópia recupera os processos e os arquivos;
@@ -105,6 +114,17 @@ internet, e a leitura dos PDFs e as análises são feitas no próprio navegador.
   documentos encontrados e escolha quem é o seu cliente. A cada intimação, abra o processo, toque em **Colar
   intimação** e confira o que o Analisador de Processos preencheu; acompanhe o painel e a agenda de prazos e marque cada providência como
   protocolada.
+- **Busca no DJEN**: crie o intermediário seguindo o [guia](servidor/README.md) (uns 15 minutos, na conta da AWS) e
+  preencha o endereço, a senha e a OAB em **Configurações**. As intimações encontradas aparecem no painel em
+  **Intimações do DJEN para conferir**: abra cada uma, confira o ato, o prazo e as partes intimadas e salve (ou toque
+  em **Conferido** no expediente).
+
+## Intermediário no Brasil
+
+O DJEN recusa consultas feitas de fora do Brasil, e o DataJud não deixa *sites* lerem as respostas (regra de CORS).
+Por isso, a busca passa por uma pequena função na AWS, em São Paulo, que só repassa consultas a essas duas APIs e só
+para quem manda a senha certa. O código e o passo a passo estão em [`servidor/`](servidor/README.md); o uso do
+aplicativo fica dentro do que a AWS oferece de graça.
 
 ## Como publicar (GitHub Pages)
 
@@ -123,13 +143,14 @@ Requer Node.js 22.
 ```bash
 npm install
 npm run dev              # abre em http://localhost:5173
-npm test                 # testes da lógica (prazos, leitura dos autos, jurisprudência, armazenamento)
+npm test                 # testes da lógica (prazos, leitura dos autos, jurisprudência, busca no CNJ, armazenamento)
 npm run build            # gera a versão publicada em dist/
 npm run test:e2e         # teste completo no navegador (gera capturas em screenshots/)
 ```
 
 O teste de ponta a ponta monta PDFs nos formatos do PJe e do eproc (dois modelos de capa, um deles o do TJRJ) e um com
-marcadores, importa cada um pela tela e passa por todas as funções. Para usar um Chromium já instalado nele e na geração dos ícones
+marcadores, importa cada um pela tela e passa por todas as funções, inclusive a busca no DJEN e no DataJud, com um
+intermediário simulado e dados fictícios. Para usar um Chromium já instalado nele e na geração dos ícones
 (`node scripts/make-icons.mjs public "#24406b"`), informe o caminho em `CHROMIUM_PATH`.
 
 Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/manifest.webmanifest`.
@@ -150,9 +171,13 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
 - A verificação de citações não consulta os tribunais: "fora da base" quer dizer que a decisão ainda não foi
   cadastrada, não que ela não exista. Os *links* levam à pesquisa no *site* do tribunal; depois de conferir, cadastre a
   decisão e marque **Conferi os dados na fonte oficial**.
-- As intimações do DJEN e as movimentações do DataJud ainda não são buscadas automaticamente: copie o teor da
-  comunicação e cole no Analisador de Processos. A busca automática fica para uma próxima etapa, que depende de confirmar o acesso às
-  APIs públicas do CNJ a partir do navegador (ou de um pequeno servidor intermediário).
+- A busca no DJEN registra o ato e o prazo pela leitura do texto, como na intimação colada: cada expediente vem
+  marcado para conferência, e o processo cadastrado pela busca precisa da conferência das partes, do cliente e do rito.
+  Ela encontra o que foi publicado para a OAB informada; comunicações só pelo sistema do tribunal ou pelo Domicílio
+  Judicial Eletrônico não passam pelo DJEN. Se a busca falhar (sem internet, senha errada, CNJ fora do ar), o aviso
+  aparece na tela: nesses dias, consulte o DJEN por outro meio.
+- O DataJud costuma andar semanas ou meses atrás do tribunal (o aviso mostra a data da última atualização do CNJ) e
+  não traz os processos em segredo de justiça: para prazos, vale o DJEN.
 
 ## Organização do código
 
@@ -162,6 +187,7 @@ src/domain/cnj.ts          número único do CNJ: dígito verificador e tribunal
 src/domain/calendar.ts     calendário forense: feriados, Páscoa, recesso e feriados locais
 src/domain/deadlines.ts    cálculo dos prazos com a memória de cálculo
 src/domain/analysis.ts     leitura de expedientes e decisões: ato, prazo, documentos, audiência
+src/domain/noticedraft.ts  do texto analisado ao expediente (ato, prazo, destinatários, providências)
 src/domain/casefile.ts     leitura do PDF do processo integral (PJe, eproc, e-SAJ e marcadores do PDF)
 src/domain/summons.ts      conferência da citação (o ato)
 src/domain/precedents.ts   leitura de acórdãos e das partes, formatos de citação
@@ -169,7 +195,9 @@ src/domain/refs.ts         citações de jurisprudência encontradas num texto
 src/domain/citations.ts    verificação das citações e do trecho citado
 src/domain/search.ts       pesquisa sem acentos, com pontuação e destaques
 src/store/                 ações, IndexedDB, leitura de arquivos (pdf.js, Word), cópia de segurança, exemplo
-src/ui/                    telas (React)
+src/store/cnjapi.ts        consultas ao DJEN e ao DataJud pelo intermediário
+src/ui/                    telas (React); ui/cnjsync.ts faz a busca diária no DJEN
+servidor/                  intermediário no Brasil (AWS Lambda) e o passo a passo para criá-lo
 public/                    ícones, manifesto e service worker (funciona sem internet)
 tests/                     testes da lógica (Vitest)
 scripts/e2e.mjs            teste de ponta a ponta no navegador (Playwright)

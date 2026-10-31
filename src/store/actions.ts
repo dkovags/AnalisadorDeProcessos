@@ -1,14 +1,17 @@
+import { analyze } from "../domain/analysis";
 import type { CaseFileInfo } from "../domain/casefile";
-import { checkCaseNumber, digitsOf, normalizeCaseNumber } from "../domain/cnj";
-import { isValidISO } from "../domain/dates";
+import { checkCaseNumber, digitsOf, normalizeCaseNumber, parseCnj } from "../domain/cnj";
+import { formatDate, isValidISO } from "../domain/dates";
+import { RITES } from "../domain/deadlines";
 import { STATUS } from "../domain/labels";
+import { noticeDraft } from "../domain/noticedraft";
 import { precedentKey } from "../domain/precedents";
-import { sameParty, squash } from "../domain/text";
+import { fold, isUpper, sameParty, squash, titleCase } from "../domain/text";
 import type {
-  Case, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, HistoryEntry, Holiday, ID, Notice, NoticeStatus, Party, Precedent, Prefs,
-  Task, TaskKind, TaskStatus,
+  Case, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, HistoryEntry, Holiday, ID, Notice, NoticeStatus, Party, Pole, Precedent, Prefs,
+  Rite, Task, TaskKind, TaskStatus,
 } from "../domain/types";
-import { del, put, type Op } from "./ops";
+import { applyOps, del, put, type Op } from "./ops";
 
 // Ações: funções puras que recebem os dados atuais e devolvem as alterações (ops) e um valor.
 // Entradas inválidas geram UserError, com a mensagem para mostrar à pessoa.
@@ -101,7 +104,17 @@ export function addNote(ds: Dataset, ctx: Ctx, caseId: ID, note: { date: string;
 export function deleteHistory(ds: Dataset, ctx: Ctx, caseId: ID, entryId: ID): Result<void> {
   const c = ds.cases[caseId];
   if (!c) return { ops: [], value: undefined };
-  return { ops: [put("cases", { ...c, history: c.history.filter((h) => h.id !== entryId), updatedAt: ctx.now })], value: undefined };
+  const ref = c.history.find((h) => h.id === entryId)?.ref;
+  return { ops: [put("cases", { ...c, history: c.history.filter((h) => h.id !== entryId), updatedAt: ctx.now }), ...ignoreOps(ds, [ref])], value: undefined };
+}
+
+/** Guarda as origens apagadas pela pessoa, para a busca no CNJ não registrá-las de novo. */
+function ignoreOps(ds: Dataset, refs: (string | undefined)[]): Op[] {
+  const list = refs.filter((r): r is string => !!r && /^(djen|datajud):/.test(r));
+  if (!list.length) return [];
+  const cnj = ds.prefs.cnj || {};
+  const ignored = [...new Set([...(cnj.ignored || []), ...list])].slice(-1000);
+  return [{ t: "prefs", v: { ...ds.prefs, cnj: { ...cnj, ignored } } }];
 }
 
 /** Arquivos que deixam de ter documentos depois de apagar os documentos indicados. */
@@ -136,8 +149,12 @@ function removeDocsOps(ds: Dataset, ctx: Ctx, ids: ID[]): Op[] {
 }
 
 export function deleteCase(ds: Dataset, ctx: Ctx, caseId: ID): Result<void> {
-  if (!ds.cases[caseId]) return { ops: [], value: undefined };
+  const c = ds.cases[caseId];
+  if (!c) return { ops: [], value: undefined };
   const ops: Op[] = [del("cases", caseId)];
+  // as comunicações do DJEN já registradas não voltam; as novas recriam o processo
+  const refs = [...c.history.map((h) => h.ref), ...Object.values(ds.notices).filter((n) => n.caseId === caseId).map((n) => n.ref)];
+  ops.push(...ignoreOps(ds, refs.filter((r) => r?.startsWith("djen:"))));
   for (const n of Object.values(ds.notices)) if (n.caseId === caseId) ops.push(del("notices", n.id));
   for (const t of Object.values(ds.tasks)) if (t.caseId === caseId) ops.push(del("tasks", t.id));
   const docs = Object.values(ds.docs).filter((d) => d.caseId === caseId).map((d) => d.id);
@@ -223,10 +240,19 @@ export function setNoticeStatus(ds: Dataset, ctx: Ctx, id: ID, status: NoticeSta
 }
 
 export function deleteNotice(ds: Dataset, _ctx: Ctx, id: ID): Result<void> {
-  if (!ds.notices[id]) return { ops: [], value: undefined };
+  const n = ds.notices[id];
+  if (!n) return { ops: [], value: undefined };
   const ops: Op[] = [del("notices", id)];
   for (const t of Object.values(ds.tasks)) if (t.noticeId === id) ops.push(del("tasks", t.id));
+  ops.push(...ignoreOps(ds, [n.ref]));
   return { ops, value: undefined };
+}
+
+/** Expediente registrado pela busca no DJEN, conferido pela pessoa. */
+export function reviewNotice(ds: Dataset, ctx: Ctx, id: ID): Result<void> {
+  const n = ds.notices[id];
+  if (!n) throw new UserError("Expediente não encontrado.");
+  return { ops: n.review ? [put("notices", { ...n, review: undefined, updatedAt: ctx.now })] : [], value: undefined };
 }
 
 /* ---------- providências ---------- */
@@ -548,4 +574,236 @@ export function addHoliday(ds: Dataset, ctx: Ctx, h: Omit<Holiday, "id">): Resul
 
 export function removeHoliday(ds: Dataset, _ctx: Ctx, id: ID): Result<void> {
   return { ops: [{ t: "prefs", v: { ...ds.prefs, holidays: ds.prefs.holidays.filter((h) => h.id !== id) } }], value: undefined };
+}
+
+/* ---------- busca no CNJ (DJEN e DataJud) ---------- */
+
+/** Comunicação do DJEN já lida (store/cnjapi: djenNotice). */
+export interface DjenNotice {
+  /** Identificador da comunicação no DJEN. */
+  id: string;
+  /** Disponibilização (AAAA-MM-DD). */
+  date: string;
+  number: string;
+  court?: string;
+  /** Intimação, Edital, Lista de distribuição... */
+  kind?: string;
+  /** Despacho, Decisão, Sentença... */
+  docKind?: string;
+  /** Órgão julgador. */
+  body?: string;
+  className?: string;
+  /** Publicada na Plataforma Nacional de Editais (e não no DJEN). */
+  edital: boolean;
+  link?: string;
+  /** Teor, já sem HTML. */
+  text: string;
+  recipients: { name: string; pole: Pole }[];
+  lawyers: { name: string; oab?: string; uf?: string }[];
+  /** Cancelada pelo tribunal. */
+  cancelled: boolean;
+}
+
+export interface DjenImport {
+  /** Expedientes registrados. */
+  notices: number;
+  /** Processos cadastrados (não estavam na base). */
+  cases: number;
+  /** Distribuições registradas nos andamentos. */
+  events: number;
+  /** Já registradas antes, apagadas pela pessoa ou canceladas pelo tribunal. */
+  skipped: number;
+  /** Comunicações que não deu para registrar (dados fora do esperado); a próxima busca tenta de novo. */
+  failed: number;
+}
+
+const POLE_TEXT: Record<Pole, string> = { ativo: "polo ativo", passivo: "polo passivo", terceiro: "terceiro" };
+
+const niceName = (s: string) => (isUpper(s) ? titleCase(s) : squash(s));
+
+/** Linha "Tipo de comunicação", no formato que a análise entende ("Intimação (Sentença)"). */
+function djenKindLine(n: DjenNotice): string {
+  const kind = n.kind || "Intimação";
+  return `Tipo de comunicação: ${kind}${n.docKind && fold(n.docKind) !== fold(kind) ? ` (${n.docKind})` : ""}`;
+}
+
+const recipientsLine = (n: DjenNotice) => `Destinatários: ${n.recipients.map((r) => `${r.name} (${POLE_TEXT[r.pole]})`).join("; ")}`;
+
+/** Teor do expediente: os dados da comunicação no alto e o texto publicado. */
+export function djenContent(n: DjenNotice): string {
+  const lines = [
+    djenKindLine(n),
+    `Processo: ${normalizeCaseNumber(n.number)}${n.className ? ` (${niceName(n.className)})` : ""}`,
+    n.body ? `Órgão: ${n.body}` : "",
+    `Data de disponibilização: ${formatDate(n.date)} (${n.edital ? "Plataforma Nacional de Editais" : "DJEN"})`,
+    n.recipients.length ? recipientsLine(n) : "",
+    n.lawyers.length ? `Advogados: ${n.lawyers.map((l) => `${l.name}${l.oab ? ` (OAB ${l.oab}${l.uf ? `/${l.uf}` : ""})` : ""}`).join("; ")}` : "",
+  ].filter(Boolean);
+  return `${lines.join("\n")}\n\n${n.text}`.trim();
+}
+
+/** Rito provável, pelo ramo da Justiça (número CNJ), pelo órgão e pela classe. */
+function djenRite(n: DjenNotice): Rite {
+  const f = fold(`${n.body || ""} ${n.className || ""}`);
+  if (parseCnj(n.number.replace(/\s/g, ""))?.j === "5") return "trabalho";
+  if (/criminal|\bpena(l|is)\b|\bcrimes?\b|\bjuri\b|violencia domestica/.test(f)) return "penal";
+  if (/juizado|turma recursal/.test(f)) return "juizado";
+  return "civel";
+}
+
+/** Processo que ainda não está na base: as partes vêm dos destinatários da comunicação. */
+function caseFromDjen(n: DjenNotice, today: string): CaseInput {
+  const parties: Party[] = [];
+  for (const r of n.recipients) {
+    const name = niceName(r.name);
+    if (/^sigil/.test(fold(name)) || parties.some((p) => sameParty(p.name, name))) continue;
+    parties.push({ id: "", name, pole: r.pole });
+  }
+  // comunicação dirigida a uma só parte, pela OAB de quem usa: é o cliente
+  if (parties.length === 1) parties[0].client = true;
+  return {
+    number: n.number,
+    court: n.court,
+    body: n.body,
+    className: n.className ? niceName(n.className) : undefined,
+    rite: djenRite(n),
+    status: "ativo",
+    parties,
+    notes: `Cadastrado pela busca no DJEN em ${formatDate(today)}: confira as partes, o cliente e o rito.`,
+  };
+}
+
+/** Expediente (e providências) de uma comunicação, com o ato e o prazo que a análise do texto sugere. */
+function djenNoticeOps(ds: Dataset, ctx: Ctx, c: Case, n: DjenNotice, ref: string): Op[] {
+  const head = [djenKindLine(n), n.recipients.length ? recipientsLine(n) : ""].filter(Boolean).join("\n");
+  const a = analyze(`${head}\n\n${n.text}`.slice(0, 40000), { rite: c.rite });
+  const d = noticeDraft(a, c);
+  const notes: string[] = [];
+  const twin = Object.values(ds.notices).find((x) => x.caseId === c.id && !x.ref && x.sentAt === n.date && (x.channel === "djen" || x.channel === "diario"));
+  if (twin) notes.push(`Pode ser o mesmo expediente já registrado à mão${twin.act ? ` (${twin.act})` : ""}: confira e apague o repetido.`);
+  if (d.status) notes.push(`O texto sugere mudar a situação do processo para "${STATUS[d.status].label}".`);
+  if (n.link) notes.push(`Documento: ${n.link}`);
+  const days = d.days && Number.isInteger(d.days) && d.days >= 1 && d.days <= 730 ? d.days : undefined;
+  const hearing = d.hearing && isValidISO(d.hearing.date) ? d.hearing : undefined;
+  const input: NoticeInput = {
+    caseId: c.id,
+    kind: d.kind || "intimacao",
+    channel: n.edital ? "edital" : "djen",
+    recipients: d.recipients,
+    sentAt: n.date,
+    days,
+    counting: d.counting || RITES[c.rite].counting,
+    double: d.double || undefined,
+    fromHearing: d.fromHearing && hearing ? true : undefined,
+    act: d.act,
+    basis: d.basis,
+    petition: !!d.petition,
+    content: djenContent(n),
+    hearing,
+    notes: notes.join("\n") || undefined,
+    ref,
+    review: true,
+  };
+  const tasks: TaskDraft[] = d.tasks.filter((t) => t.on).map((t) => ({ title: t.title, kind: t.kind, basis: t.basis, checklist: t.checklist, notes: t.note }));
+  try {
+    return saveNotice(ds, ctx, input, tasks).ops;
+  } catch {
+    // algo da análise fora do esperado: registra a comunicação sem prazo, para a pessoa completar
+    return saveNotice(ds, ctx, { ...input, days: undefined, hearing: undefined, fromHearing: undefined }, []).ops;
+  }
+}
+
+/**
+ * Registra as comunicações do DJEN. Cada intimação vira um expediente marcado para conferência, com o ato, o prazo e
+ * as providências que a análise do texto sugere; a lista de distribuição vai para os andamentos. O processo que não
+ * está na base é cadastrado com as partes da comunicação. Ficam de fora as comunicações já registradas, as apagadas
+ * pela pessoa e as canceladas pelo tribunal. Com `day`, guarda a data da busca nas configurações.
+ */
+export function importDjen(ds: Dataset, ctx: Ctx, items: DjenNotice[], opts: { day?: string } = {}): Result<DjenImport> {
+  const ops: Op[] = [];
+  let cur = ds;
+  const commit = (more: Op[]) => {
+    ops.push(...more);
+    cur = applyOps(cur, more);
+  };
+  const seen = new Set<string>(ds.prefs.cnj?.ignored || []);
+  for (const n of Object.values(ds.notices)) if (n.ref) seen.add(n.ref);
+  for (const c of Object.values(ds.cases)) for (const h of c.history) if (h.ref) seen.add(h.ref);
+  const out: DjenImport = { notices: 0, cases: 0, events: 0, skipped: 0, failed: 0 };
+  const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id, "en", { numeric: true }));
+  for (const n of sorted) {
+    const ref = `djen:${n.id}`;
+    const number = normalizeCaseNumber(n.number || "");
+    if (seen.has(ref) || n.cancelled) {
+      out.skipped++;
+      continue;
+    }
+    // uma comunicação com dados fora do esperado não impede as outras: desfaz só o que ela começou
+    const before = { cur, size: ops.length };
+    try {
+      if (!number || !isValidISO(n.date)) throw new UserError("Comunicação sem número de processo ou data.");
+      let c = findCaseByNumber(cur, number);
+      const created = !c;
+      if (!c) {
+        const r = saveCase(cur, ctx, caseFromDjen({ ...n, number }, ctx.today));
+        commit(r.ops);
+        c = cur.cases[r.value];
+      }
+      if (/distribuicao/.test(fold(n.kind || ""))) {
+        const entry: HistoryEntry = { id: ctx.id("h"), date: n.date, at: ctx.now, kind: "evento", text: `${n.kind}: ${squash(n.text) || "processo distribuído"}`, ref };
+        commit([put("cases", { ...c, history: [...c.history, entry], updatedAt: ctx.now })]);
+        out.events++;
+      } else {
+        commit(djenNoticeOps(cur, ctx, c, n, ref));
+        out.notices++;
+      }
+      if (created) out.cases++;
+      seen.add(ref);
+    } catch {
+      cur = before.cur;
+      ops.length = before.size;
+      out.failed++;
+    }
+  }
+  if (opts.day) {
+    const cnj = cur.prefs.cnj || {};
+    commit([{ t: "prefs", v: { ...cur.prefs, cnj: { ...cnj, lastRun: opts.day, lastCount: out.notices } } }]);
+  }
+  return { ops, value: out };
+}
+
+/** Movimentação do DataJud já em texto (store/cnjapi: datajudMovements). */
+export interface MovementEntry {
+  date: string;
+  /** "175750" (para ordenar as do mesmo dia). */
+  time?: string;
+  /** Nome da movimentação na tabela do CNJ ("Conclusão", "Juntada de Petição"). */
+  name: string;
+  /** Nome com os complementos ("Juntada de Documento (Petição)"). */
+  text: string;
+  /** "datajud:<código>:<data e hora>" */
+  ref: string;
+}
+
+/**
+ * Registra nos andamentos as movimentações do DataJud que ainda não estão lá. Num processo importado do eproc, os
+ * eventos do arquivo já cobrem as movimentações até o último deles: do DataJud entram só as posteriores.
+ */
+export function importMovements(ds: Dataset, ctx: Ctx, caseId: ID, entries: MovementEntry[]): Result<number> {
+  const c = ds.cases[caseId];
+  if (!c) throw new UserError("Processo não encontrado.");
+  const skip = new Set<string>(ds.prefs.cnj?.ignored || []);
+  for (const h of c.history) if (h.ref) skip.add(h.ref);
+  const lastEvent = c.history.reduce((m, h) => (h.ref?.startsWith("evento:") && h.date > m ? h.date : m), "");
+  const extra: HistoryEntry[] = [];
+  for (const e of entries) {
+    if (skip.has(e.ref) || !isValidISO(e.date) || (lastEvent && e.date <= lastEvent)) continue;
+    // a mesma movimentação já anotada de outra fonte, no mesmo dia
+    const name = fold(e.name);
+    if (c.history.some((h) => h.date === e.date && h.kind === "evento" && !h.ref?.startsWith("datajud:") && fold(h.text).includes(name))) continue;
+    skip.add(e.ref);
+    extra.push({ id: ctx.id("h"), date: e.date, at: ctx.now, kind: "evento", text: e.text, ref: e.ref });
+  }
+  if (!extra.length) return { ops: [], value: 0 };
+  return { ops: [put("cases", { ...c, history: [...c.history, ...extra], updatedAt: ctx.now })], value: extra.length };
 }

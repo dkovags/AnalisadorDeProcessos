@@ -1,7 +1,9 @@
-import { BellRing, CalendarClock, FileUp, FolderOpen, FolderPlus, Gavel, Sparkles, TriangleAlert } from "lucide-react";
+import { BellRing, CalendarClock, FileUp, FolderOpen, FolderPlus, Gavel, Inbox, Sparkles, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { formatDateLong } from "../../domain/dates";
 import { STATUS, STATUS_ORDER } from "../../domain/labels";
+import { caseLabel } from "../../domain/select";
+import type { Dataset } from "../../domain/types";
 import { loadExample } from "../../store/example";
 import { AgendaList, useAgenda } from "../components/Agenda";
 import { Empty, Logo } from "../components/basics";
@@ -67,6 +69,33 @@ function Welcome() {
   );
 }
 
+/** Intimações que a busca no DJEN registrou sozinha e que a pessoa ainda não conferiu. */
+function ReviewBanner({ ds }: { ds: Dataset }) {
+  const ui = useUI();
+  const list = Object.values(ds.notices)
+    .filter((n) => n.review && ds.cases[n.caseId])
+    .sort((a, b) => b.sentAt.localeCompare(a.sentAt));
+  if (!list.length) return null;
+  return (
+    <div className="banner warn">
+      <Inbox size={20} />
+      <div>
+        <strong>{list.length === 1 ? "1 intimação do DJEN para conferir." : `${list.length} intimações do DJEN para conferir.`}</strong> A busca automática
+        registrou o ato e o prazo pela leitura do texto: abra cada uma, confira e salve.
+        <div className="banner-actions">
+          {list.slice(0, 5).map((n) => (
+            <button key={n.id} className="btn btn-ghost btn-sm" onClick={() => ui.open({ type: "notice", noticeId: n.id })}>
+              {caseLabel(ds.cases[n.caseId])}
+              {n.act ? `: ${n.act}` : ""}
+            </button>
+          ))}
+          {list.length > 5 && <span className="muted small">e mais {list.length - 5} (na aba Expedientes e prazos de cada processo)</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const ds = useData();
   const ui = useUI();
@@ -125,6 +154,8 @@ export function Dashboard() {
               <span className="stat-l">{active === 1 ? "processo ativo" : "processos ativos"}</span>
             </a>
           </div>
+
+          <ReviewBanner ds={ds} />
 
           {petitions.length > 0 && (
             <div className={`banner ${missing.length || overdue.length ? "warn" : "info"}`}>

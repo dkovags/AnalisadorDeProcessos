@@ -1,15 +1,17 @@
-import { CalendarX, DatabaseBackup, Download, Globe, HardDrive, Moon, Plus, Trash, Upload } from "lucide-react";
+import { CalendarX, CircleCheck, DatabaseBackup, Download, Globe, HardDrive, Moon, Plus, RefreshCw, Trash, TriangleAlert, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { APP_NAME } from "../../config";
+import { APP_NAME, SERVER_GUIDE_URL } from "../../config";
 import { makeCalendar, yearHolidays } from "../../domain/calendar";
 import { addDays, formatDate, formatDateWeek, parts } from "../../domain/dates";
-import type { CitationStyle, Holiday, Prefs } from "../../domain/types";
+import { UFS } from "../../domain/cnj";
+import type { CitationStyle, CnjPrefs, Holiday, Prefs } from "../../domain/types";
 import * as A from "../../store/actions";
 import { makeBackup, readBackup } from "../../store/backup";
-import { cnjReport, REACH_TEXT, testCnj, type ApiCheck } from "../../store/cnjapi";
+import { CnjError, cnjPing, cnjReady, oabNumber } from "../../store/cnjapi";
 import { emptyDataset } from "../../store/dataset";
 import { persistStorage, storageInfo } from "../../store/ingest";
-import { CopyButton, Field, fileSize } from "../components/basics";
+import { djenSummary, FIRST_DAYS, OVERLAP_DAYS, plural, syncDjen } from "../cnjsync";
+import { Field, fileSize } from "../components/basics";
 import { STYLE_LABEL } from "../components/PrecedentCard";
 import { PageHeader } from "../components/Shell";
 import { useData, useRun, useStore, useToday, useUI } from "../context";
@@ -75,47 +77,148 @@ function HolidayForm() {
   );
 }
 
-/** Testa se as APIs públicas do CNJ (DJEN e DataJud) aceitam consultas feitas direto deste site. */
-function CnjTest() {
+/** "RJ 123.456", "123456/RJ", "OAB/RJ 123.456" → número e UF, para preencher a busca no DJEN. */
+function parseOab(s: string | undefined): { number?: string; uf?: string } {
+  if (!s) return {};
+  const uf = UFS.find((u) => new RegExp(`(^|[^A-Z])${u}([^A-Z]|$)`).test(s.toUpperCase()));
+  return { number: oabNumber(s.match(/\d[\d.]*/)?.[0]) || undefined, uf };
+}
+
+/** Busca automática das intimações no DJEN e dos andamentos no DataJud, pelo intermediário no Brasil. */
+function CnjSettings() {
+  const ds = useData();
+  const store = useStore();
+  const runAction = useRun();
   const today = useToday();
-  const [busy, setBusy] = useState(false);
-  const [checks, setChecks] = useState<ApiCheck[] | null>(null);
+  const cnj = ds.prefs.cnj || {};
+  const guess = parseOab(ds.prefs.oab);
+  const oab = cnj.oab || guess.number || "";
+  const uf = cnj.uf || guess.uf || "";
+  const [busy, setBusy] = useState<"" | "test" | "sync">("");
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const save = (patch: Partial<CnjPrefs>) => runAction(A.savePrefs, { cnj: { ...store.getSnapshot()?.prefs.cnj, ...patch } });
+  // a OAB de "Quem usa" vale até a pessoa escrever outra aqui: grava a que está na tela antes de buscar
+  const keepOab = () => {
+    const now = store.getSnapshot()?.prefs;
+    const g = parseOab(now?.oab);
+    if ((!now?.cnj?.oab && g.number) || (!now?.cnj?.uf && g.uf)) save({ oab: now?.cnj?.oab || g.number, uf: now?.cnj?.uf || g.uf });
+  };
+
+  const test = async () => {
+    keepOab();
+    const c = store.getSnapshot()?.prefs.cnj;
+    if (!cnjReady(c)) return setResult({ ok: false, text: "Preencha o endereço e a senha do intermediário." });
+    setBusy("test");
+    setResult(null);
+    try {
+      await cnjPing(c, today);
+      setResult({ ok: true, text: "Conexão funcionando: o intermediário aceitou a senha e o DJEN respondeu." });
+    } catch (e) {
+      setResult({ ok: false, text: e instanceof CnjError ? e.message : "O teste não deu certo. Tente de novo." });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const sync = async () => {
+    keepOab();
+    setBusy("sync");
+    setResult(null);
+    try {
+      const r = await syncDjen(store, today);
+      const skipped = r.skipped ? `; ${plural(r.skipped, "já estava no app ou foi descartada", "já estavam no app ou foram descartadas")}` : "";
+      setResult({
+        ok: true,
+        text: `Busca de ${formatDate(r.from)} a ${formatDate(r.to)}: ${plural(r.found, "comunicação encontrada", "comunicações encontradas")}; ${djenSummary(r)}${skipped}.`,
+      });
+    } catch (e) {
+      setResult({ ok: false, text: e instanceof CnjError ? e.message : "A busca não deu certo. Tente de novo." });
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <section className="card pad stack">
       <h2>
-        <Globe size={18} /> Busca automática no CNJ (em teste)
+        <Globe size={18} /> Busca automática no DJEN e no DataJud
       </h2>
       <p className="muted small">
-        Para buscar sozinho as intimações publicadas no DJEN e os andamentos do DataJud, o {APP_NAME} precisa que as APIs públicas do CNJ aceitem consultas
-        feitas direto deste site. O teste faz uma consulta de exemplo, sem nenhum dado seu, e mostra o resultado.
+        O {APP_NAME} busca as intimações publicadas para a sua OAB no Diário de Justiça Eletrônico Nacional e registra cada uma como expediente, com o ato e o
+        prazo lidos do texto, para você conferir. Na aba Andamentos de cada processo, traz as movimentações do DataJud. Como o DJEN só atende consultas feitas do
+        Brasil, a busca passa pelo intermediário (a sua função na AWS, em São Paulo). Saem do aparelho só a OAB, as datas e os números dos processos.{" "}
+        <a href={SERVER_GUIDE_URL} target="_blank" rel="noreferrer">
+          Como criar o intermediário
+        </a>
+        .
       </p>
-      <div className="row">
-        <button
-          className="btn btn-ghost"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              setChecks(await testCnj(today));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Testando…" : "Testar conexão com o CNJ"}
-        </button>
-        {checks && <CopyButton text={cnjReport(checks, today)} label="Copiar o resultado" />}
+      <div className="form-grid">
+        <Field label="Endereço do intermediário" className="span-2">
+          <input
+            type="url"
+            inputMode="url"
+            defaultValue={cnj.url || ""}
+            placeholder="https://….lambda-url.sa-east-1.on.aws/"
+            autoComplete="off"
+            spellCheck={false}
+            onBlur={(e) => e.target.value.trim() !== (cnj.url || "") && save({ url: e.target.value.trim() || undefined })}
+          />
+        </Field>
+        <Field label="Senha do intermediário" className="span-2">
+          <input
+            type="password"
+            defaultValue={cnj.key || ""}
+            autoComplete="new-password"
+            onBlur={(e) => e.target.value.trim() !== (cnj.key || "") && save({ key: e.target.value.trim() || undefined })}
+          />
+        </Field>
+        <Field label="OAB (número)">
+          <input
+            inputMode="numeric"
+            defaultValue={oab}
+            placeholder="123456"
+            onBlur={(e) => oabNumber(e.target.value) !== (cnj.oab || "") && save({ oab: oabNumber(e.target.value) || undefined })}
+          />
+        </Field>
+        <Field label="UF da OAB">
+          <select value={uf} onChange={(e) => save({ uf: e.target.value || undefined })}>
+            <option value="">Escolha</option>
+            {UFS.map((u) => (
+              <option key={u}>{u}</option>
+            ))}
+          </select>
+        </Field>
       </div>
-      {checks && (
-        <ul className="cnj-checks">
-          {checks.map((c) => (
-            <li key={c.api}>
-              <strong>{c.api}:</strong> {REACH_TEXT[c.reach]}
-              {c.status ? ` (HTTP ${c.status})` : ""}
-              {!!c.fields?.length && <div className="muted small">campos: {c.fields.join(", ")}</div>}
-            </li>
-          ))}
-        </ul>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!cnj.auto}
+          onChange={(e) => {
+            keepOab();
+            save({ auto: e.target.checked });
+          }}
+        />{" "}
+        Buscar as intimações novas ao abrir o {APP_NAME} (uma vez por dia)
+      </label>
+      <div className="row">
+        <button className="btn btn-primary" disabled={!!busy} onClick={sync}>
+          <RefreshCw size={16} /> {busy === "sync" ? "Buscando…" : "Buscar intimações agora"}
+        </button>
+        <button className="btn btn-ghost" disabled={!!busy} onClick={test}>
+          {busy === "test" ? "Testando…" : "Testar a conexão"}
+        </button>
+      </div>
+      {result && (
+        <div className={`banner small ${result.ok ? "info" : "danger"}`} role="status">
+          {result.ok ? <CircleCheck size={18} /> : <TriangleAlert size={18} />}
+          <span>{result.text}</span>
+        </div>
+      )}
+      {cnj.lastRun && (
+        <p className="muted small">
+          Última busca: {formatDate(cnj.lastRun)} ({plural(cnj.lastCount ?? 0, "intimação nova", "intimações novas")}). A primeira busca alcança os últimos{" "}
+          {FIRST_DAYS} dias; as seguintes recomeçam {OVERLAP_DAYS} dias antes da anterior, sem repetir o que já foi registrado.
+        </p>
       )}
     </section>
   );
@@ -300,15 +403,15 @@ export function SettingsPage() {
           </Field>
         </section>
 
-        <CnjTest />
+        <CnjSettings />
 
         <section className="card pad stack">
           <h2>
             <HardDrive size={18} /> Dados
           </h2>
           <p className="muted small">
-            Tudo fica guardado só neste navegador, neste aparelho (nada vai para a internet). Faça cópias de segurança com frequência: se os dados do navegador forem
-            apagados, só a cópia recupera os processos e os arquivos.
+            Tudo fica guardado só neste navegador, neste aparelho (só as consultas da busca no DJEN e no DataJud, se ligada, vão para a internet). Faça cópias de
+            segurança com frequência: se os dados do navegador forem apagados, só a cópia recupera os processos e os arquivos.
           </p>
           <div className="muted small">
             {Object.keys(ds.cases).length} processos · {Object.keys(ds.docs).length} documentos · {Object.keys(ds.files).length} arquivos ·{" "}

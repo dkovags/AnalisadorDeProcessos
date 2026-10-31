@@ -47,10 +47,10 @@ export interface HistoryEntry {
   date: string;
   /** Quando foi registrado. */
   at: string;
-  /** "status": mudança de situação; "nota": anotação; "evento": movimentação lida do processo (eventos do eproc). */
+  /** "status": mudança de situação; "nota": anotação; "evento": movimentação do processo (eventos do eproc, DataJud, DJEN). */
   kind: "status" | "nota" | "evento";
   text: string;
-  /** Origem da entrada, para não repetir ao importar o processo de novo (ex.: "evento:12"). */
+  /** Origem da entrada, para não repetir ao importar de novo ("evento:12" do eproc, "datajud:...", "djen:..."). */
   ref?: string;
 }
 
@@ -134,6 +134,10 @@ export interface Notice {
   closedAt?: string;
   hearing?: Hearing;
   notes?: string;
+  /** Origem, para não repetir ao buscar de novo (ex.: "djen:123456", o id da comunicação no DJEN). */
+  ref?: string;
+  /** Registrado sozinho pela busca no DJEN: falta conferir o ato e o prazo (some ao salvar o expediente). */
+  review?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -311,6 +315,25 @@ export interface Prefs {
   citationStyle: CitationStyle;
   /** Copiar a ementa como citação direta junto com a referência. */
   quoteSummary: boolean;
+  /** Busca automática no CNJ (DJEN e DataJud), pelo intermediário no Brasil (servidor/aws-lambda). */
+  cnj?: CnjPrefs;
+}
+
+export interface CnjPrefs {
+  /** Endereço do intermediário (a URL da função na AWS). */
+  url?: string;
+  /** Senha do intermediário. */
+  key?: string;
+  /** Número da OAB (só os algarismos) e UF, para buscar as intimações no DJEN. */
+  oab?: string;
+  uf?: string;
+  /** Buscar as intimações novas ao abrir o app, uma vez por dia. */
+  auto?: boolean;
+  /** Dia da última busca (AAAA-MM-DD) e quantas intimações novas ela registrou. */
+  lastRun?: string;
+  lastCount?: number;
+  /** Origens apagadas pela pessoa ("djen:123", "datajud:..."): a busca não as registra de novo. */
+  ignored?: string[];
 }
 
 export interface Dataset {

@@ -84,6 +84,12 @@ Emende a parte autora a petição inicial, no prazo de 15 dias, sob pena de inde
     expect(a.status?.status).toBe("execucao");
   });
 
+  it("o prazo do recurso é o da lei, não o de outro ato escrito perto", () => {
+    const a = analyze("Defiro o pedido de sequestro. Intime-se o réu para, em 48 horas, comprovar o depósito, sob pena de multa.");
+    const agravo = a.suggestions.find((s) => s.rule === "decisao");
+    expect(agravo).toMatchObject({ act: "Agravo de instrumento", days: 15, explicit: false });
+  });
+
   it("prazos escritos por extenso e em horas", () => {
     expect(explicitTerms(fold("no prazo de quinze dias úteis")).map((t) => [t.days, t.counting])).toEqual([[15, "uteis"]]);
     expect(explicitTerms(fold("em 48 (quarenta e oito) horas"))[0].days).toBe(2);

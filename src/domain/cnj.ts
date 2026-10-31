@@ -45,7 +45,7 @@ export function digitsOf(s: string): string {
 }
 
 // Tribunais estaduais e regionais eleitorais seguem a ordem alfabética dos estados (código TR).
-const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SE", "SP", "TO"];
+export const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SE", "SP", "TO"];
 
 /** Sigla do tribunal a partir dos campos J e TR: 8.26 → TJSP, 4.03 → TRF3, 5.02 → TRT2. */
 export function courtOfCnj(c: Pick<Cnj, "j" | "tr">): string | undefined {

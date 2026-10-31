@@ -432,6 +432,9 @@ export interface Analysis {
   docType: DocType;
 }
 
+/** Recursos contra a decisão, a sentença e o acórdão: o prazo é o da lei, e um prazo escrito no texto é de outro ato. */
+const LEGAL_TERM = new Set(["sentenca", "acordao", "decisao"]);
+
 interface ExplicitTerm {
   days: number;
   counting?: Counting;
@@ -688,7 +691,7 @@ export function analyze(text: string, opts: { rite?: Rite } = {}): Analysis {
       .map((t) => ({ t, dist: Math.abs(t.index - m.index!) }))
       .filter((x) => x.dist < 260)
       .sort((a, b) => a.dist - b.dist)[0]?.t;
-    if (near && r.kind !== "audiencia") {
+    if (near && r.kind !== "audiencia" && !LEGAL_TERM.has(r.id)) {
       days = near.days;
       explicit = true;
       if (near.counting) counting = near.counting;
@@ -721,7 +724,7 @@ export function analyze(text: string, opts: { rite?: Rite } = {}): Analysis {
   }
   // sem prazo escrito, um prazo único no texto vale para a sugestão principal
   raw.sort((a, b) => b.priority - a.priority || a.index - b.index);
-  if (terms.length === 1 && raw[0] && !raw[0].explicit && raw[0].kind !== "audiencia" && raw[0].petition) {
+  if (terms.length === 1 && raw[0] && !raw[0].explicit && raw[0].kind !== "audiencia" && raw[0].petition && !LEGAL_TERM.has(raw[0].rule)) {
     raw[0].days = terms[0].days;
     raw[0].explicit = true;
     if (terms[0].counting) raw[0].counting = terms[0].counting;

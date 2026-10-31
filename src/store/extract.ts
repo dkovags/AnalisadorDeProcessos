@@ -205,15 +205,31 @@ export async function extractPdf(data: Uint8Array, pdfjs: PdfJs, onProgress?: (d
   }
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", shy: "",
+  ordm: "º", ordf: "ª", sect: "§", deg: "°", para: "¶", middot: "·", bull: "•", hellip: "…", euro: "€", copy: "©", reg: "®",
+  laquo: "«", raquo: "»", ldquo: "“", rdquo: "”", lsquo: "‘", rsquo: "’", ndash: "\u2013", mdash: "\u2014", szlig: "ß",
+};
+
+// letras acentuadas: &aacute; → á, &Atilde; → Ã, &ccedil; → ç
+const MARKS: Record<string, string> = { acute: "́", grave: "̀", circ: "̂", tilde: "̃", uml: "̈", cedil: "̧" };
+
+function namedEntity(e: string): string | undefined {
+  const fixed = ENTITIES[e] ?? ENTITIES[e.toLowerCase()];
+  if (fixed !== undefined) return fixed;
+  const m = e.match(/^([a-z])(acute|grave|circ|tilde|uml|cedil)$/i);
+  if (!m) return undefined;
+  const ch = (m[1] + MARKS[m[2].toLowerCase()]).normalize("NFC");
+  return ch.length === 1 ? ch : undefined;
+}
 
 export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
     if (e[0] === "#") {
       const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
     }
-    return ENTITIES[e.toLowerCase()] ?? m;
+    return namedEntity(e) ?? m;
   });
 }
 
@@ -274,7 +290,7 @@ export function odtText(data: Uint8Array): string {
 export function htmlText(html: string): string {
   return decodeEntities(
     html
-      .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "")
+      .replace(/<(script|style|head)\b[\s\S]*?<\/\1>/gi, "")
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/(p|div|li|tr|h\d|blockquote|section|article|table)>/gi, "\n")
       .replace(/<[^>]+>/g, ""),

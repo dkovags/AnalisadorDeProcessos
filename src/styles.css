@@ -2098,6 +2098,16 @@ legend {
   }
 }
 
+svg.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg.spin {
+    animation: none;
+  }
+}
+
 .review {
   display: flex;
   flex-direction: column;
@@ -2648,10 +2658,6 @@ body.modal-open .toasts {
 
 /* ---------- teste de conexão com o CNJ ---------- */
 
-.cnj-checks {
-  margin: 0;
-  padding-left: 18px;
-  display: grid;
-  gap: 6px;
-  overflow-wrap: anywhere;
+.stack > .banner {
+  margin-bottom: 0;
 }

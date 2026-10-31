@@ -1,29 +1,21 @@
-import { Plus, Sparkles, Trash } from "lucide-react";
+import { Inbox, Plus, Sparkles, Trash } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { APP_NAME } from "../../config";
-import { analyze, type Analysis, type Suggestion } from "../../domain/analysis";
+import { analyze, type Analysis } from "../../domain/analysis";
 import { CHANNELS, NOTICE_KINDS, RITES, computeDeadline, cachedCalendar } from "../../domain/deadlines";
 import { formatDateWeek, relativeDay } from "../../domain/dates";
 import { STATUS, TASK_KINDS } from "../../domain/labels";
-import { caseLabel, clientOf } from "../../domain/select";
+import { noticeDraft, type DraftTask as DomainDraftTask } from "../../domain/noticedraft";
+import { caseLabel } from "../../domain/select";
 import { checkSummons } from "../../domain/summons";
-import { sameParty } from "../../domain/text";
-import type { CaseStatus, Channel, Counting, ID, NoticeKind, TaskKind } from "../../domain/types";
+import type { CaseStatus, Channel, Counting, ID, NoticeKind } from "../../domain/types";
 import * as A from "../../store/actions";
 import { Field, Modal } from "../components/basics";
 import { DeadlineMemo } from "../components/Cards";
 import { useData, useRun, useStore, useToday, useUI } from "../context";
 
-interface DraftTask {
+interface DraftTask extends DomainDraftTask {
   key: string;
-  on: boolean;
-  title: string;
-  kind: TaskKind;
-  basis?: string;
-  checklist: string[];
-  note?: string;
-  alt?: string;
-  fromRule?: string;
 }
 
 const READ_LABEL: Partial<Record<Channel, string>> = {
@@ -38,25 +30,6 @@ const READ_LABEL: Partial<Record<Channel, string>> = {
 
 let seq = 0;
 const key = () => `k${++seq}`;
-
-function draftsFrom(a: Analysis): DraftTask[] {
-  const out: DraftTask[] = [];
-  a.suggestions.forEach((s: Suggestion, i) => {
-    if (!s.petition && s.kind !== "audiencia" && s.kind !== "diligencia") return;
-    out.push({
-      key: key(),
-      on: i === 0 || s.kind === "audiencia",
-      title: s.kind === "audiencia" ? a.hearing?.kind || s.act : s.act,
-      kind: s.kind,
-      basis: s.basis,
-      checklist: s.docs,
-      note: s.note,
-      alt: s.alt,
-      fromRule: s.rule,
-    });
-  });
-  return out;
-}
 
 export function NoticeDialog({ caseId: initialCase, noticeId, text, docId, onClose }: { caseId?: ID; noticeId?: ID; text?: string; docId?: ID; onClose: () => void }) {
   const ds = useData();
@@ -127,31 +100,27 @@ export function NoticeDialog({ caseId: initialCase, noticeId, text, docId, onClo
       }
     }
     setAnalysis(a);
-    if (a.kind) setKind(a.kind);
-    if (a.channel) setChannel(a.channel);
-    if (a.sentAt) setSentAt(a.sentAt);
-    const main = a.suggestions.find((s) => s.petition) || a.suggestions[0];
-    if (main) {
-      setAct(main.kind === "audiencia" ? a.hearing?.kind || main.act : main.act);
-      setDays(main.days ? String(main.days) : "");
-      setCounting(main.counting);
-      setBasis(main.basis || "");
-      setPetition(main.petition);
+    const d = noticeDraft(a, cs);
+    if (d.kind) setKind(d.kind);
+    if (d.channel) setChannel(d.channel);
+    if (d.sentAt) setSentAt(d.sentAt);
+    if (d.act !== undefined) {
+      setAct(d.act);
+      setDays(d.days ? String(d.days) : "");
+      if (d.counting) setCounting(d.counting);
+      setBasis(d.basis || "");
+      setPetition(!!d.petition);
     }
-    if (a.hearing) {
+    if (d.hearing) {
       setHasHearing(true);
-      setHearing({ date: a.hearing.date, time: a.hearing.time || "", kind: a.hearing.kind || "", place: a.hearing.place || "" });
-      if (main?.rule === "contestacao" && /concilia/i.test(a.hearing.kind || "")) setFromHearing(true);
+      setHearing({ date: d.hearing.date, time: d.hearing.time || "", kind: d.hearing.kind || "", place: d.hearing.place || "" });
+      if (d.fromHearing) setFromHearing(true);
     }
-    setDrafts(draftsFrom(a));
+    setDrafts(d.tasks.map((t) => ({ ...t, key: key() })));
     if (cs) {
-      let rec: ID[] = [];
-      if (a.recipients.length) rec = cs.parties.filter((p) => a.recipients.some((n) => sameParty(n, p.name))).map((p) => p.id);
-      if (!rec.length && a.target) rec = cs.parties.filter((p) => (a.target === "ambos" ? p.pole !== "terceiro" : p.pole === a.target)).map((p) => p.id);
-      if (!rec.length && clientOf(cs)) rec = [clientOf(cs)!.id];
-      setRecipients(rec);
-      setDouble(cs.parties.some((p) => rec.includes(p.id) && p.doubleTerm));
-      if (a.status && a.status.status !== cs.status) setStatusSuggestion({ status: a.status.status, on: true });
+      setRecipients(d.recipients);
+      setDouble(d.double);
+      if (d.status) setStatusSuggestion({ status: d.status, on: true });
     }
   }
 
@@ -206,6 +175,8 @@ export function NoticeDialog({ caseId: initialCase, noticeId, text, docId, onClo
       hearing: hasHearing && hearing.date ? { date: hearing.date, time: hearing.time || undefined, kind: hearing.kind || undefined, place: hearing.place || undefined } : undefined,
       notes,
       status: prev?.status,
+      // origem na busca do DJEN (para não registrar de novo); salvar conta como conferido
+      ref: prev?.ref,
     };
     const tasks: A.TaskDraft[] = noticeId ? [] : drafts.filter((d) => d.on && d.title.trim()).map((d) => ({ title: d.title, kind: d.kind, basis: d.basis, checklist: d.checklist, notes: d.note }));
     const res = runAction(A.saveNotice, input, tasks);
@@ -239,6 +210,15 @@ export function NoticeDialog({ caseId: initialCase, noticeId, text, docId, onClo
         </>
       }
     >
+      {prev?.review && (
+        <div className="banner warn small">
+          <Inbox size={18} />
+          <span>
+            Registrado pela busca no DJEN, com o ato, o prazo e as partes intimadas lidos do texto. Confira tudo e salve: o expediente deixa de aparecer como
+            pendente de conferência.
+          </span>
+        </div>
+      )}
       {!initialCase && !prev && (
         <Field label="Processo">
           <select value={caseId} onChange={(e) => setCaseId(e.target.value)}>

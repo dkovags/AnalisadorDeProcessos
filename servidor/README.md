@@ -15,14 +15,15 @@ alerta de gasto (passo 6) avisa se algo mudar.
    https://sa-east-1.console.aws.amazon.com/lambda/home?region=sa-east-1#/create/function
    Outra forma: no seletor de região, no alto da página, à direita, escolha **América do Sul (São Paulo)**.
 2. **Crie a função:** escolha **Criar do zero**, dê o nome `analisador-cnj`, escolha o tempo de execução
-   **Node.js 22.x** e clique em **Criar função**.
+   **Node.js 22.x** (ou mais novo) e clique em **Criar função**.
 3. **Cole o código:** na aba **Código**, abra o arquivo `index.mjs`, apague o conteúdo e cole o código de
-   [`aws-lambda/index.mjs`](aws-lambda/index.mjs) (no GitHub, o botão de copiar fica no alto do arquivo). Na linha
-   `const SENHA = "";`, escreva entre as aspas uma senha longa só sua (por exemplo, 30 letras e números misturados).
-   Clique em **Deploy** (Implantar).
-4. **Ajuste o tempo limite,** na aba **Configuração**: em **Configuração geral**, clique em **Editar**, ponha o
-   **Tempo limite** em 20 segundos e salve. Em vez de escrever a senha no código, dá para guardá-la em
-   **Variáveis de ambiente**, com a chave `CHAVE`.
+   [`aws-lambda/index.mjs`](aws-lambda/index.mjs) (no GitHub, o botão de copiar fica no alto do arquivo). Clique em
+   **Deploy** (Implantar). A senha não vai no código: este arquivo é público, e quem o lesse poderia usar a sua função.
+4. **Configure,** na aba **Configuração**:
+   - em **Configuração geral**, clique em **Editar**, ponha o **Tempo limite** em 1 minuto e salve (o DataJud às vezes
+     leva mais de 15 segundos para responder);
+   - em **Variáveis de ambiente**, clique em **Editar** e em **Adicionar variável de ambiente**, escreva `CHAVE` na
+     chave e, no valor, uma senha longa só sua (por exemplo, 30 letras e números misturados), e salve.
 5. **Crie o endereço público:** em **URL da função**, clique em **Criar URL da função**, escolha o tipo de autenticação
    **NONE** e marque a opção de configurar o **CORS**:
    - origem permitida: `https://dkovags.github.io`
@@ -34,10 +35,23 @@ alerta de gasto (passo 6) avisa se algo mudar.
 6. **Crie o alerta de gasto:** procure **Budgets** (Orçamentos) na busca do console, clique em **Criar orçamento**,
    escolha **Usar um modelo** e **Orçamento de gasto zero**, informe o seu *e-mail* e confirme.
 
-Depois, ponha o endereço e a senha em **Configurações** do aplicativo.
+Depois, em **Configurações** do aplicativo, na parte **Busca automática no DJEN e no DataJud**, preencha o endereço, a
+senha, o número da OAB e a UF, toque em **Testar a conexão** e, se der certo, em **Buscar intimações agora**. Para a
+busca acontecer sozinha, marque **Buscar as intimações novas ao abrir o Analisador de Processos**.
+
+## Trocar a senha
+
+Em **Configuração > Variáveis de ambiente**, troque o valor de `CHAVE` e salve; depois, ponha a senha nova em
+**Configurações** do aplicativo. Se o código colado na função tiver uma senha escrita na linha `const SENHA = "..."`
+(versão antiga deste arquivo), cole o código novo, que não tem essa linha, e clique em **Deploy**.
+
+## Atualizar o código
+
+Quando [`aws-lambda/index.mjs`](aws-lambda/index.mjs) mudar, repita o passo 3. A senha continua na variável `CHAVE`.
 
 ## Como funciona
 
 - `GET <endereço>/djen?numeroOab=...&ufOab=...` repassa a consulta às comunicações do DJEN.
-- `POST <endereço>/datajud/api_publica_<tribunal>` repassa a consulta ao DataJud, com a chave pública do CNJ.
+- `POST <endereço>/datajud/api_publica_<tribunal>` (por exemplo, `api_publica_tjrj` ou `api_publica_tre-sp`) repassa
+  a consulta ao DataJud, com a chave pública do CNJ.
 - Qualquer outro caminho, ou uma chamada sem a senha no cabeçalho `x-chave`, é recusado.

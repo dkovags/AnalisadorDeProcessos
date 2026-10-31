@@ -45,3 +45,13 @@ export function notifyDeadlines(ds: Dataset, today: string) {
     }
   }
 }
+
+/** Aviso avulso do navegador (ex.: intimações novas encontradas no DJEN), se a pessoa ligou os avisos. */
+export function notifyNews(ds: Dataset, title: string, body: string, tag: string) {
+  if (!ds.prefs.notify || !notifySupported() || Notification.permission !== "granted") return;
+  try {
+    new Notification(title, { body, tag, icon: "./icon-192.png" });
+  } catch {
+    // alguns celulares só permitem avisos pelo service worker
+  }
+}

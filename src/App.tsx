@@ -5,6 +5,7 @@ import { MemoryPersistence } from "./store/persistence";
 import { AppStore } from "./store/store";
 import { ConfirmDialog, Logo } from "./ui/components/basics";
 import { Shell } from "./ui/components/Shell";
+import { useDjenAutoSync } from "./ui/cnjsync";
 import { StoreProvider, UIContext, useDatasetOrNull, useStatus, useStore, useToday, useUI, type Dialog, type Toast, type UI } from "./ui/context";
 import { CaseDialog } from "./ui/dialogs/CaseDialog";
 import { DocViewer } from "./ui/dialogs/DocViewer";
@@ -202,6 +203,7 @@ function Main({ memory }: { memory: boolean }) {
   const store = useStore();
   useTheme(ds?.prefs.theme);
   useDeadlineAlerts();
+  useDjenAutoSync();
   useEffect(() => store.onError((msg) => ui.toast(msg, { kind: "error" })), [store, ui]);
   useEffect(() => {
     if (memory) ui.toast("O navegador não deixou guardar dados: o que você fizer some ao fechar a página (aba anônima?).", { kind: "error" });

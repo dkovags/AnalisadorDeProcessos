@@ -1,4 +1,4 @@
-import { ChevronDown, CircleCheck, FileText, Gavel, Pencil, RotateCcw, Trash } from "lucide-react";
+import { Check, ChevronDown, CircleCheck, FileText, Gavel, Pencil, RotateCcw, Trash } from "lucide-react";
 import { useState } from "react";
 import { courtRef } from "../../domain/casefile";
 import { formatDate, formatDateWeek } from "../../domain/dates";
@@ -185,6 +185,7 @@ export function NoticeCard({ notice }: { notice: Notice }) {
             <span className={`chip ${forClient ? "tone-info" : "tone-muted"}`}>{forClient ? "para o cliente" : "para a parte contrária"}</span>
           )}
           {!open && <span className="chip tone-ok">{notice.status === "cumprido" ? "cumprido" : "encerrado"}</span>}
+          {notice.review && <span className="chip tone-warn">DJEN · conferir</span>}
         </div>
       </header>
       {names.length > 0 && <div className="item-sub">Destinatário: {names.join(", ")}</div>}
@@ -257,8 +258,17 @@ export function NoticeCard({ notice }: { notice: Notice }) {
             <FileText size={14} /> {DOC_TYPES[doc.type]}
           </button>
         )}
+        {notice.review && (
+          <button
+            className="btn btn-ghost btn-sm"
+            title="O ato, o prazo e as partes intimadas estão certos"
+            onClick={() => runAction(A.reviewNotice, notice.id) && ui.toast("Expediente conferido.")}
+          >
+            <Check size={14} /> Conferido
+          </button>
+        )}
         <button className="btn btn-ghost btn-sm" onClick={() => ui.open({ type: "notice", noticeId: notice.id })}>
-          <Pencil size={14} /> Editar
+          <Pencil size={14} /> {notice.review ? "Conferir" : "Editar"}
         </button>
         <button
           className="icon-btn small"
