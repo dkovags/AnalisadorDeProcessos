@@ -33,9 +33,10 @@ const timeOf = (ref?: string) => Number(ref?.match(/^datajud:.*T(\d{6})$/)?.[1])
 
 /** Origem do andamento, mostrada embaixo do texto. */
 function sourceOf(h: HistoryEntry): string | undefined {
-  if (h.ref?.startsWith("datajud:")) return "DataJud";
-  if (h.ref?.startsWith("djen:")) return "DJEN";
-  return h.kind === "nota" ? "Anotação" : undefined;
+  const where = h.body ? ` · ${h.body}` : "";
+  if (h.ref?.startsWith("datajud:")) return `DataJud${where}`;
+  if (h.ref?.startsWith("djen:")) return `DJEN${where}`;
+  return h.kind === "nota" ? "Anotação" : h.body;
 }
 
 /** Busca as movimentações do processo no DataJud (pelo intermediário) e registra as novas nos andamentos. */
@@ -50,12 +51,14 @@ function DatajudButton({ c }: { c: Case }) {
   const update = async () => {
     setBusy(true);
     try {
-      const r = await datajudMovements(cnj, court, c.number);
+      // o número do processo e os dos recursos autuados à parte, ligados a ele
+      const numbers = [c.number, ...(c.instances || []).flatMap((i) => (i.number ? [i.number] : []))];
+      const r = await datajudMovements(cnj, court, numbers);
       if (!r.found) {
         ui.toast("O DataJud não tem este processo (o CNJ demora a incluir os novos, e os em segredo de justiça não aparecem).", { kind: "error" });
         return;
       }
-      const added = runAction(A.importMovements, c.id, r.entries);
+      const added = runAction(A.importMovements, c.id, r.entries, r.sightings);
       if (added === undefined) return;
       const when = r.updatedAt ? ` Dados do CNJ atualizados em ${formatDate(r.updatedAt.slice(0, 10))}.` : "";
       ui.toast(`${added ? plural(added, "andamento novo", "andamentos novos") : "Nenhum andamento novo"} no DataJud.${when}`);

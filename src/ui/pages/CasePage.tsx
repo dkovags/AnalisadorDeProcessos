@@ -1,8 +1,9 @@
-import { CalendarClock, CircleUser, ExternalLink, FileUp, Pencil, Sparkles, Trash, UserCheck } from "lucide-react";
+import { CalendarClock, CircleUser, FileUp, Pencil, Sparkles, Trash, UserCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { analyze, type Suggestion } from "../../domain/analysis";
 import { checkCaseNumber } from "../../domain/cnj";
 import { formatDate } from "../../domain/dates";
+import { currentInstance } from "../../domain/instances";
 import { RITES } from "../../domain/deadlines";
 import { DOC_TYPES, ORDER_TYPES, POLES, STATUS, STATUS_ORDER } from "../../domain/labels";
 import { agenda, caseLabel, docsOfCase, noticesOfCase, tasksOfCase } from "../../domain/select";
@@ -16,6 +17,7 @@ import { casePath, navigate, type CaseTab } from "../router";
 import { CasePrecedents } from "./case/CasePrecedents";
 import { CaseDeadlines } from "./case/CaseDeadlines";
 import { CaseDocuments } from "./case/CaseDocuments";
+import { CaseInstances } from "./case/CaseInstances";
 import { CaseTimeline } from "./case/CaseTimeline";
 
 function Info({ label, children }: { label: string; children: ReactNode }) {
@@ -157,13 +159,8 @@ function Summary({ c }: { c: Case }) {
             <Info label="Segredo de justiça">{c.secret ? "Sim" : undefined}</Info>
             <Info label="Resultado">{c.outcome}</Info>
           </dl>
-          <div className="card-links">
-            <a className="link" href="https://comunica.pje.jus.br/" target="_blank" rel="noreferrer">
-              <ExternalLink size={14} /> Consultar intimações no DJEN
-            </a>
-            <CopyButton text={c.number.replace(/\D/g, "")} label="Copiar só os dígitos" className="link-btn" />
-          </div>
         </section>
+        <CaseInstances c={c} />
         {c.notes && (
           <section className="card">
             <div className="card-head">
@@ -194,6 +191,8 @@ export function CasePage({ id, tab, q }: { id: string; tab: CaseTab; q?: string 
   const open = tasksOfCase(ds, id).filter((t) => t.status === "pendente" || t.status === "elaboracao").length + noticesOfCase(ds, id).filter((n) => n.status === "aberto").length;
   const precedents = Object.values(ds.precedents).filter((p) => p.caseIds.includes(id)).length;
   const setStatus = (s: CaseStatus) => runAction(A.setCaseStatus, id, s) && ui.toast(`Situação: ${STATUS[s].label}.`);
+  // onde os autos estão agora (a turma recursal, a câmara), quando não é a origem
+  const here = currentInstance(c);
   return (
     <div className="page">
       <div className="case-header">
@@ -203,6 +202,7 @@ export function CasePage({ id, tab, q }: { id: string; tab: CaseTab; q?: string 
             <span className="mono">{c.number}</span>
             {c.court && <span>· {c.court}</span>}
             {c.body && <span className="hide-sm">· {c.body}</span>}
+            {here && here.level !== "origem" && here.body && here.body !== c.body && <span className="chip tone-info">agora: {here.body}</span>}
           </div>
         </div>
         <div className="case-actions">

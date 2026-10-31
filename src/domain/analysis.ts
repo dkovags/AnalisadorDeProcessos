@@ -145,7 +145,7 @@ const RULES: Rule[] = [
     id: "contrarrazoes",
     act: "Contrarrazões",
     kind: "recurso",
-    re: /contrarraz(oes|oar|oa)|responder ao recurso|resposta ao recurso/,
+    re: /contrarraz(oes|oar|oa)|contraminut|respond\w* (ao|o) (recurso|agravo)|resposta ao (recurso|agravo)/,
     days: { civel: 15, juizado: 10, trabalho: 8, penal: 8 },
     basis: { civel: "CPC, art. 1.010, § 1º", juizado: "Lei 9.099/1995, art. 42, § 2º", trabalho: "CLT, art. 900", penal: "CPP, art. 600" },
     priority: 80,

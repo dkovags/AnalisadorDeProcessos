@@ -96,6 +96,15 @@ aplicativo e funciona sem internet.
   estava na base é cadastrado com as partes da comunicação, e a lista de distribuição entra nos andamentos. Não repete
   o que já foi registrado nem o que você apagou. Na aba **Andamentos**, o botão **Atualizar andamentos (DataJud)** traz
   as movimentações do processo registradas pelo tribunal no DataJud.
+- **Instâncias e consulta pública**: quando o processo sobe para a turma recursal (ou para a câmara, a turma do
+  tribunal, a uniformização ou um tribunal superior), a comunicação do DJEN ou o registro do DataJud mostra o novo
+  órgão: o Analisador de Processos anota a subida nos andamentos, passa a situação para "Em grau de recurso" e mostra
+  no alto do processo onde os autos estão agora; quando eles voltam à origem, anota a volta. Cada instância guarda o
+  link da consulta pública dela (cada sistema e cada grau tem o seu), e o processo avisa quando a instância atual ainda
+  não tem link. O recurso que ganha número próprio (agravo de instrumento, recurso de medida cautelar na turma
+  recursal) chega como um processo à parte, com o aviso para ligá-lo ao processo principal: depois de ligado, os
+  expedientes vão para o principal, o número do recurso vira uma instância dele e as próximas comunicações e
+  movimentações desse número caem direto lá.
 - **Planilha e cópia de segurança**: a lista de processos sai em planilha (.csv) para o Excel, e a cópia de segurança
   é um .zip com os dados, os arquivos originais e o texto já lido, que restaura tudo em outro aparelho.
 
@@ -198,6 +207,7 @@ src/domain/calendar.ts     calendário forense: feriados, Páscoa, recesso e fer
 src/domain/deadlines.ts    cálculo dos prazos com a memória de cálculo
 src/domain/analysis.ts     leitura de expedientes e decisões: ato, prazo, documentos, audiência
 src/domain/noticedraft.ts  do texto analisado ao expediente (ato, prazo, destinatários, providências)
+src/domain/instances.ts    instâncias do processo: origem, turma recursal ou tribunal, uniformização, superiores
 src/domain/casefile.ts     leitura do PDF do processo integral (PJe, eproc, e-SAJ e marcadores do PDF)
 src/domain/summons.ts      conferência da citação (o ato)
 src/domain/precedents.ts   leitura de acórdãos e das partes, formatos de citação

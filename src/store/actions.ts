@@ -3,14 +3,15 @@ import type { CaseFileInfo } from "../domain/casefile";
 import { checkCaseNumber, digitsOf, normalizeCaseNumber, parseCnj } from "../domain/cnj";
 import { formatDate, isValidISO } from "../domain/dates";
 import { RITES } from "../domain/deadlines";
+import { instanceLevel, trackInstance, type Sighting } from "../domain/instances";
 import { STATUS } from "../domain/labels";
 import { noticeDraft } from "../domain/noticedraft";
 import { precedentKey } from "../domain/precedents";
 import { remapRange } from "../domain/representation";
 import { fold, isUpper, sameParty, squash, titleCase } from "../domain/text";
 import type {
-  Case, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, HistoryEntry, Holiday, ID, Notice, NoticeStatus, Party, Pole, Precedent, Prefs,
-  Rite, Task, TaskKind, TaskStatus,
+  Case, CaseInstance, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, HistoryEntry, Holiday, ID, InstanceLevel, Notice, NoticeStatus, Party,
+  Pole, Precedent, Prefs, Rite, Task, TaskKind, TaskStatus,
 } from "../domain/types";
 import { applyOps, del, put, type Op } from "./ops";
 
@@ -42,8 +43,10 @@ function sameNumber(a: string, b: string): boolean {
   return da.length >= 15 ? da === digitsOf(b) : a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-export function findCaseByNumber(ds: Dataset, number: string): Case | undefined {
-  return Object.values(ds.cases).find((c) => sameNumber(c.number, number));
+/** Processo pelo número dele ou pelo de uma instância (o recurso autuado à parte, ligado ao processo principal). */
+export function findCaseByNumber(ds: Dataset, number: string, exceptId?: ID): Case | undefined {
+  const cases = Object.values(ds.cases).filter((c) => c.id !== exceptId);
+  return cases.find((c) => sameNumber(c.number, number)) || cases.find((c) => c.instances?.some((i) => i.number && sameNumber(i.number, number)));
 }
 
 function cleanParties(ctx: Ctx, parties: Party[]): Party[] {
@@ -55,8 +58,8 @@ function cleanParties(ctx: Ctx, parties: Party[]): Party[] {
 export function saveCase(ds: Dataset, ctx: Ctx, input: CaseInput): Result<ID> {
   const number = normalizeCaseNumber(input.number || "");
   if (!number) throw new UserError("Informe o número do processo.");
-  const dup = Object.values(ds.cases).find((c) => c.id !== input.id && sameNumber(c.number, number));
-  if (dup) throw new UserError(`Já existe um processo com o número ${dup.number}.`);
+  const dup = findCaseByNumber(ds, number, input.id);
+  if (dup) throw new UserError(sameNumber(dup.number, number) ? `Já existe um processo com o número ${dup.number}.` : `Este número já é de um recurso ligado ao processo ${dup.number}.`);
   if (input.filedAt && !isValidISO(input.filedAt)) throw new UserError("Data de distribuição inválida.");
   const prev = input.id ? ds.cases[input.id] : undefined;
   if (input.id && !prev) throw new UserError("Processo não encontrado.");
@@ -712,7 +715,8 @@ function caseFromDjen(n: DjenNotice, today: string): CaseInput {
     body: n.body,
     className: n.className ? niceName(n.className) : undefined,
     rite: djenRite(n),
-    status: "ativo",
+    // visto primeiro já na turma recursal ou no tribunal: está em grau de recurso
+    status: instanceLevel(n.body) === "origem" ? "ativo" : "recurso",
     parties,
     notes: `Cadastrado pela busca no DJEN em ${formatDate(today)}: confira as partes, o cliente e o rito.`,
   };
@@ -794,6 +798,20 @@ export function importDjen(ds: Dataset, ctx: Ctx, items: DjenNotice[], opts: { d
         commit(r.ops);
         c = cur.cases[r.value];
       }
+      // a instância de onde veio a comunicação (a turma recursal, a câmara, a volta à origem)
+      const sighting: Sighting = {
+        level: instanceLevel(n.body, n.court && c.court && n.court !== c.court ? n.court : undefined),
+        body: n.body,
+        number: digitsOf(number) !== digitsOf(c.number) ? number : undefined,
+        className: n.className ? niceName(n.className) : undefined,
+        since: n.date,
+        source: "djen",
+      };
+      if (sighting.level !== "origem" || sighting.number || c.instances?.length) {
+        const t = trackInstance(c, sighting, ctx);
+        commit([put("cases", t.case)]);
+        c = t.case;
+      }
       if (/distribuicao/.test(fold(n.kind || ""))) {
         const entry: HistoryEntry = { id: ctx.id("h"), date: n.date, at: ctx.now, kind: "evento", text: `${n.kind}: ${squash(n.text) || "processo distribuído"}`, ref };
         commit([put("cases", { ...c, history: [...c.history, entry], updatedAt: ctx.now })]);
@@ -828,15 +846,24 @@ export interface MovementEntry {
   text: string;
   /** "datajud:<código>:<data e hora>" */
   ref: string;
+  /** Órgão da movimentação, quando não é o de origem (a turma recursal, a câmara). */
+  body?: string;
 }
 
 /**
  * Registra nos andamentos as movimentações do DataJud que ainda não estão lá. Num processo importado do eproc, os
  * eventos do arquivo já cobrem as movimentações até o último deles: do DataJud entram só as posteriores.
  */
-export function importMovements(ds: Dataset, ctx: Ctx, caseId: ID, entries: MovementEntry[]): Result<number> {
-  const c = ds.cases[caseId];
+export function importMovements(ds: Dataset, ctx: Ctx, caseId: ID, entries: MovementEntry[], sightings: Sighting[] = []): Result<number> {
+  let c = ds.cases[caseId];
   if (!c) throw new UserError("Processo não encontrado.");
+  // as instâncias que o DataJud mostra (um registro por grau: origem, turma recursal, segundo grau...)
+  const before = c;
+  for (const s of [...sightings].sort((a, b) => a.since.localeCompare(b.since))) {
+    const own = s.number && digitsOf(s.number) !== digitsOf(c.number) ? s.number : undefined;
+    if (s.level === "origem" && !own && !c.instances?.length) continue;
+    c = trackInstance(c, { ...s, number: own }, ctx).case;
+  }
   const skip = new Set<string>(ds.prefs.cnj?.ignored || []);
   for (const h of c.history) if (h.ref) skip.add(h.ref);
   const lastEvent = c.history.reduce((m, h) => (h.ref?.startsWith("evento:") && h.date > m ? h.date : m), "");
@@ -847,8 +874,97 @@ export function importMovements(ds: Dataset, ctx: Ctx, caseId: ID, entries: Move
     const name = fold(e.name);
     if (c.history.some((h) => h.date === e.date && h.kind === "evento" && !h.ref?.startsWith("datajud:") && fold(h.text).includes(name))) continue;
     skip.add(e.ref);
-    extra.push({ id: ctx.id("h"), date: e.date, at: ctx.now, kind: "evento", text: e.text, ref: e.ref });
+    extra.push({ id: ctx.id("h"), date: e.date, at: ctx.now, kind: "evento", text: e.text, ref: e.ref, body: e.body });
   }
-  if (!extra.length) return { ops: [], value: 0 };
+  if (!extra.length && c === before) return { ops: [], value: 0 };
   return { ops: [put("cases", { ...c, history: [...c.history, ...extra], updatedAt: ctx.now })], value: extra.length };
+}
+
+/* ---------- instâncias ---------- */
+
+export type InstanceInput = { id?: ID; level: InstanceLevel; body?: string; number?: string; className?: string; url?: string; since?: string };
+
+/** Cadastra ou corrige uma instância à mão (o órgão, o número do recurso autuado à parte, o link da consulta pública). */
+export function saveInstance(ds: Dataset, ctx: Ctx, caseId: ID, input: InstanceInput): Result<ID> {
+  const c = ds.cases[caseId];
+  if (!c) throw new UserError("Processo não encontrado.");
+  const url = clean(input.url);
+  if (url && !/^https?:\/\/\S+$/i.test(url)) throw new UserError("O link da consulta pública deve começar com https://.");
+  const number = input.number?.trim() ? normalizeCaseNumber(input.number) : undefined;
+  if (number) {
+    if (sameNumber(number, c.number)) throw new UserError("Esse é o número do próprio processo: deixe o campo em branco.");
+    const other = findCaseByNumber(ds, number, caseId);
+    if (other) throw new UserError(`O número ${number} já é de outro processo (${other.number}). Para juntar os dois, use "Ligar a outro processo".`);
+  }
+  if (input.since && !isValidISO(input.since)) throw new UserError("Data inválida.");
+  const prev = input.id ? c.instances?.find((i) => i.id === input.id) : undefined;
+  if (input.id && !prev) throw new UserError("Instância não encontrada.");
+  const inst: CaseInstance = {
+    ...prev,
+    id: prev?.id || ctx.id("in"),
+    level: input.level,
+    body: clean(input.body),
+    number,
+    className: clean(input.className),
+    url,
+    since: input.since || prev?.since || (prev ? undefined : ctx.today),
+    last: prev?.last,
+    source: prev?.source || "manual",
+  };
+  const instances = prev ? (c.instances || []).map((i) => (i.id === prev.id ? inst : i)) : [...(c.instances || []), inst];
+  return { ops: [put("cases", { ...c, instances, updatedAt: ctx.now })], value: inst.id };
+}
+
+export function removeInstance(ds: Dataset, ctx: Ctx, caseId: ID, instanceId: ID): Result<void> {
+  const c = ds.cases[caseId];
+  if (!c?.instances?.some((i) => i.id === instanceId)) return { ops: [], value: undefined };
+  return { ops: [put("cases", { ...c, instances: c.instances.filter((i) => i.id !== instanceId), updatedAt: ctx.now })], value: undefined };
+}
+
+/**
+ * Liga o processo de um recurso autuado à parte (agravo de instrumento, recurso de medida cautelar) ao processo
+ * principal: os expedientes, as providências, os documentos e os andamentos passam para o principal, e o número do
+ * recurso vira uma instância dele, para as próximas comunicações e movimentações irem direto para lá.
+ */
+export function linkCases(ds: Dataset, ctx: Ctx, fromId: ID, toId: ID): Result<ID> {
+  const from = ds.cases[fromId];
+  const to = ds.cases[toId];
+  if (!from || !to || fromId === toId) throw new UserError("Escolha o processo principal.");
+  // partes: as que já estão no principal ficam; as outras entram nele
+  const parties = [...to.parties];
+  const partyMap = new Map<ID, ID>();
+  for (const p of from.parties) {
+    const same = parties.find((x) => sameParty(x.name, p.name));
+    if (same) partyMap.set(p.id, same.id);
+    else {
+      parties.push({ ...p, client: to.parties.some((x) => x.client) ? undefined : p.client });
+      partyMap.set(p.id, p.id);
+    }
+  }
+  const dates = [...from.history.map((h) => h.date), ...Object.values(ds.notices).filter((n) => n.caseId === fromId).map((n) => n.sentAt)].sort();
+  const own: CaseInstance = {
+    id: ctx.id("in"),
+    level: instanceLevel(from.body) === "origem" ? "recursal" : instanceLevel(from.body),
+    body: from.body,
+    number: from.number,
+    className: from.className,
+    url: (from.instances || []).find((i) => i.url)?.url,
+    since: dates[0] || from.filedAt,
+    last: dates.at(-1),
+    source: "manual",
+  };
+  const instances = [...(to.instances || []), own, ...(from.instances || []).filter((i) => i.number && !sameNumber(i.number, from.number))];
+  const history = [
+    ...to.history,
+    ...from.history.filter((h) => h.kind !== "status" && !h.ref?.startsWith("instancia:")),
+    { id: ctx.id("h"), date: ctx.today, at: ctx.now, kind: "nota" as const, text: `Ligado o recurso autuado à parte nº ${from.number}${from.className ? ` (${from.className})` : ""}.` },
+  ];
+  const ops: Op[] = [put("cases", { ...to, parties, instances, history, updatedAt: ctx.now }), del("cases", fromId)];
+  for (const n of Object.values(ds.notices))
+    if (n.caseId === fromId) ops.push(put("notices", { ...n, caseId: toId, recipients: n.recipients.map((r) => partyMap.get(r) || r), updatedAt: ctx.now }));
+  for (const t of Object.values(ds.tasks)) if (t.caseId === fromId) ops.push(put("tasks", { ...t, caseId: toId, updatedAt: ctx.now }));
+  for (const d of Object.values(ds.docs)) if (d.caseId === fromId) ops.push(put("docs", { ...d, caseId: toId }));
+  for (const p of Object.values(ds.precedents))
+    if (p.caseIds.includes(fromId)) ops.push(put("precedents", { ...p, caseIds: [...new Set(p.caseIds.map((x) => (x === fromId ? toId : x)))], updatedAt: ctx.now }));
+  return { ops, value: toId };
 }

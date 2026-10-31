@@ -557,8 +557,81 @@ input[type="radio"] {
 .card-links {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px 18px;
   padding: 4px 16px 16px;
+}
+
+.pad-x {
+  padding: 0 16px 16px;
+}
+
+.instances {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.instances > li {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.instances > li.current {
+  border-color: color-mix(in srgb, var(--info) 45%, var(--border));
+  background: var(--info-soft);
+}
+
+.inst-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.inst-main {
+  min-width: 0;
+  flex: 1 1 220px;
+  overflow-wrap: anywhere;
+}
+
+.inst-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inst-hint {
+  margin-top: 4px;
+  color: var(--info);
+}
+
+.inst-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.link-form .row {
+  align-items: center;
+}
+
+.link-form select {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.banner.link-form {
+  margin: 0 16px 12px;
+}
+
+.banner.link-form p {
+  margin: 0 0 8px;
 }
 
 .cards {

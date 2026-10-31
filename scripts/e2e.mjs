@@ -467,13 +467,15 @@ try {
 
   // busca no DJEN e no DataJud pelo intermediário (simulado aqui, com dados fictícios)
   const novo = cnj("0809999", "2026", "8", "19", "0001");
+  const agravo = cnj("3000221", "2026", "8", "19", "9000");
   const cnjCalls = [];
+  let djenRound = 0;
   const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "x-chave, content-type", "access-control-allow-methods": "GET, POST" };
   const reply = (route, status, body) => route.fulfill({ status, headers: cors, contentType: "application/json", body: JSON.stringify(body) });
   const djenItem = (id, numero, nome, polo, texto, tipoDocumento = "Despacho") => ({
     id,
     data_disponibilizacao: "2026-10-28",
-    siglaTribunal: numero === novo ? "TJRJ" : "TJRN",
+    siglaTribunal: numero === number ? "TJRN" : "TJRJ",
     tipoComunicacao: "Intimação",
     tipoDocumento,
     nomeOrgao: numero === novo ? "3ª Vara Cível da Comarca de Exemplo" : "5ª Vara Cível da Comarca de Mossoró",
@@ -491,17 +493,34 @@ try {
     if (req.headers()["x-chave"] !== "senha-teste") return reply(route, 401, { erro: "Senha ausente ou errada." });
     const u = new globalThis.URL(req.url());
     cnjCalls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams) });
-    if (u.pathname === "/djen")
-      return reply(route, 200, {
-        status: "success",
-        items:
-          u.searchParams.get("dataDisponibilizacaoInicio") === u.searchParams.get("dataDisponibilizacaoFim")
-            ? []
-            : [
-                djenItem(9001, novo, "CARLOS NOVO CLIENTE", "A", "Intime-se a parte autora para, no prazo de 15 (quinze) dias, apresentar réplica à contestação."),
-                djenItem(9002, number, "ANA CLIENTE", "A", "Intime-se a parte autora para se manifestar sobre o laudo pericial, no prazo de 15 dias."),
-              ],
-      });
+    if (u.pathname === "/djen") {
+      const sameDay = u.searchParams.get("dataDisponibilizacaoInicio") === u.searchParams.get("dataDisponibilizacaoFim");
+      if (!sameDay) djenRound++;
+      // na segunda busca, o processo novo já subiu para a turma recursal, e chega um agravo com número próprio
+      const items = sameDay
+        ? []
+        : djenRound === 1
+          ? [
+              djenItem(9001, novo, "CARLOS NOVO CLIENTE", "A", "Intime-se a parte autora para, no prazo de 15 (quinze) dias, apresentar réplica à contestação."),
+              djenItem(9002, number, "ANA CLIENTE", "A", "Intime-se a parte autora para se manifestar sobre o laudo pericial, no prazo de 15 dias."),
+            ]
+          : [
+              {
+                ...djenItem(9003, novo, "CARLOS NOVO CLIENTE", "A", "Intime-se o recorrido para apresentar contrarrazões ao recurso inominado, no prazo de 10 dias."),
+                data_disponibilizacao: "2026-10-29",
+                nomeOrgao: "3ª Turma Recursal Cível",
+                nomeClasse: "RECURSO INOMINADO CíVEL",
+              },
+              {
+                ...djenItem(9004, agravo, "CARLOS NOVO CLIENTE", "A", "Intime-se o agravado para responder ao agravo, no prazo de 10 dias.", "Decisão"),
+                data_disponibilizacao: "2026-10-30",
+                nomeOrgao: "1ª Turma Recursal Fazendária",
+                nomeClasse: "AGRAVO DE INSTRUMENTO",
+                numeroprocessocommascara: agravo,
+              },
+            ];
+      return reply(route, 200, { status: "success", items });
+    }
     if (u.pathname === "/datajud/api_publica_tjrj")
       return reply(route, 200, {
         hits: {
@@ -560,6 +579,31 @@ try {
   await page.getByRole("tab", { name: /Expedientes e prazos/ }).click();
   await page.locator(".item-card", { hasText: "Réplica" }).first().waitFor();
 
+  // o processo sobe para a turma recursal; um agravo chega com número próprio e é ligado ao processo principal
+  await page.goto(URL + "#/configuracoes");
+  await page.getByRole("button", { name: "Buscar intimações agora" }).click();
+  await page.getByText(/2 intimações novas registradas, 1 processo cadastrado/).waitFor();
+  await page.goto(URL + "#/processos");
+  await page.locator(".case-row", { hasText: novo }).click();
+  const instancias = page.locator("section", { has: page.getByRole("heading", { name: "Instâncias e consulta pública" }) });
+  await instancias.locator("li.current", { hasText: "3ª Turma Recursal Cível" }).waitFor();
+  await instancias.getByText("Os autos estão nesta instância").waitFor();
+  expect((await page.locator(".status-select").inputValue()) === "recurso", "a situação deveria ser Em grau de recurso");
+  await instancias.locator("li.current").getByRole("button", { name: "Guardar o link da consulta" }).click();
+  await instancias.getByLabel("Link da consulta pública").fill("https://consulta.exemplo/turma-recursal?processo=1");
+  await instancias.getByRole("button", { name: "Salvar" }).click();
+  await instancias.getByRole("link", { name: "Consulta pública" }).waitFor();
+  expect((await instancias.getByRole("link", { name: "Consulta pública" }).getAttribute("href")) === "https://consulta.exemplo/turma-recursal?processo=1", "link da consulta não guardado");
+  await page.goto(URL + "#/processos");
+  await page.locator(".case-row", { hasText: agravo }).click();
+  await page.getByText(/parece ser um recurso autuado à parte/).waitFor();
+  await shot(page, "28-recurso-a-parte");
+  await page.getByRole("button", { name: "Ligar", exact: true }).click();
+  await page.locator(".modal").getByRole("button", { name: "Ligar", exact: true }).click();
+  await page.getByText(/Recurso ligado/).waitFor();
+  await instancias.getByText(agravo).waitFor();
+  await shot(page, "29-instancias");
+
   // tema escuro
   await page.goto(URL + "#/configuracoes");
   await page.getByRole("combobox", { name: /Tema/ }).selectOption("dark");
@@ -577,6 +621,9 @@ try {
   await m.getByRole("button", { name: /Ver um exemplo/ }).click();
   await m.getByText("Maria Exemplo x Banco Alfa (exemplo)").first().waitFor();
   await shot(m, "20-celular-processo");
+  await m.getByText("Instâncias e consulta pública").scrollIntoViewIfNeeded();
+  const caseOverflow = await m.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(caseOverflow <= 0, `a página do processo rola para o lado no celular (${caseOverflow}px)`);
   await m.goto(URL + "#/");
   await m.getByText("Próximos prazos").waitFor();
   await shot(m, "21-celular-painel");

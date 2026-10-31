@@ -84,6 +84,11 @@ Emende a parte autora a petição inicial, no prazo de 15 dias, sob pena de inde
     expect(a.status?.status).toBe("execucao");
   });
 
+  it("resposta ao agravo é contrarrazões", () => {
+    const a = analyze("Intime-se o agravado para responder ao agravo, no prazo de 10 dias.", { rite: "juizado" });
+    expect(a.suggestions[0]).toMatchObject({ rule: "contrarrazoes", act: "Contrarrazões", days: 10 });
+  });
+
   it("o prazo do recurso é o da lei, não o de outro ato escrito perto", () => {
     const a = analyze("Defiro o pedido de sequestro. Intime-se o réu para, em 48 horas, comprovar o depósito, sob pena de multa.");
     const agravo = a.suggestions.find((s) => s.rule === "decisao");

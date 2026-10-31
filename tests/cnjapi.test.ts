@@ -130,8 +130,46 @@ describe("busca no CNJ pelo intermediário", () => {
       { date: "2026-08-10", time: "093000", name: "Documento", text: "Documento (Petição)", ref: "datajud:581:2026-08-10T093000" },
       { date: "2026-08-20", time: "175750", name: "Conclusão", text: "Conclusão", ref: "datajud:51:2026-08-20T175750" },
     ]);
+    expect(r.sightings).toEqual([
+      { level: "origem", body: undefined, number: "0801234-56.2026.8.19.0001", className: undefined, since: "2026-08-10", last: "2026-08-20", source: "datajud" },
+    ]);
     const none = await datajudMovements({ url: CONF.url, key: CONF.key }, "TJRJ", "0801234-56.2026.8.19.0001", async () => json({ hits: { hits: [] } }));
-    expect(none).toEqual({ found: false, entries: [], updatedAt: undefined });
+    expect(none).toEqual({ found: false, entries: [], updatedAt: undefined, sightings: [] });
     await expect(datajudMovements({ url: CONF.url, key: CONF.key }, "TJRJ", "123", async () => json({}))).rejects.toThrow(/20 algarismos/);
+  });
+
+  it("consulta também o número do recurso autuado à parte e marca o grau de cada registro", async () => {
+    const urls: string[] = [];
+    const r = await datajudMovements({ url: CONF.url, key: CONF.key }, "TJRJ", ["0801234-56.2026.8.19.0001", "3000221-82.2026.8.19.9000", "0801234-56.2026.8.19.0001"], async (url, init) => {
+      urls.push(url);
+      const n = (JSON.parse(String(init?.body)) as { query: { match: { numeroProcesso: string } } }).query.match.numeroProcesso;
+      if (n.startsWith("30002218")) return json({ erro: "Caminho desconhecido." }, 404);
+      return json({
+        hits: {
+          hits: [
+            { _source: { numeroProcesso: n, grau: "JE", orgaoJulgador: { nome: "1º JUIZADO ESPECIAL CIVEL" }, movimentos: [{ codigo: 22, nome: "Sentença", dataHora: "2026-05-02T10:00:00Z" }] } },
+            {
+              _source: {
+                numeroProcesso: n,
+                grau: "TR",
+                orgaoJulgador: { nome: "3ª TURMA RECURSAL CIVEL" },
+                classe: { nome: "RECURSO INOMINADO CÍVEL" },
+                movimentos: [{ codigo: 51, nome: "Conclusão", dataHora: "2026-07-10T12:00:00Z" }],
+              },
+            },
+          ],
+        },
+      });
+    });
+    // o mesmo número só uma vez; o do recurso que falhou não impede o resto
+    expect(urls).toEqual(["https://intermediario.exemplo/datajud/api_publica_tjrj", "https://intermediario.exemplo/datajud/api_publica_tjrj"]);
+    expect(r.entries.map((e) => [e.text, e.body])).toEqual([
+      ["Sentença", undefined],
+      ["Conclusão", "3ª Turma Recursal Civel"],
+    ]);
+    expect(r.sightings.map((x) => [x.level, x.body, x.className, x.since])).toEqual([
+      ["origem", "1º Juizado Especial Civel", undefined, "2026-05-02"],
+      ["recursal", "3ª Turma Recursal Civel", "Recurso Inominado Cível", "2026-07-10"],
+    ]);
   });
 });

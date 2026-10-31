@@ -41,6 +41,27 @@ export interface Party {
   doubleTerm?: boolean;
 }
 
+/** Instância por onde o processo passa: origem (vara, juizado), recurso (turma recursal, câmara, turma do tribunal), uniformização, tribunal superior. */
+export type InstanceLevel = "origem" | "recursal" | "uniformizacao" | "superior";
+
+export interface CaseInstance {
+  id: ID;
+  level: InstanceLevel;
+  /** Órgão julgador nesta instância ("3ª Turma Recursal Cível", "Gabinete do Des. Fulano"). */
+  body?: string;
+  /** Número nesta instância, quando o recurso foi autuado à parte (agravo de instrumento, recurso de medida cautelar). */
+  number?: string;
+  /** Classe nesta instância ("Agravo de Instrumento"). */
+  className?: string;
+  /** Endereço da consulta pública nesta instância (cada sistema e cada grau tem o seu). */
+  url?: string;
+  /** Primeira e última notícia do processo nesta instância (comunicação, movimentação ou cadastro). */
+  since?: string;
+  last?: string;
+  /** De onde veio a informação. */
+  source?: "djen" | "datajud" | "manual";
+}
+
 export interface HistoryEntry {
   id: ID;
   /** Data do fato (AAAA-MM-DD). */
@@ -52,6 +73,8 @@ export interface HistoryEntry {
   text: string;
   /** Origem da entrada, para não repetir ao importar de novo ("evento:12" do eproc, "datajud:...", "djen:..."). */
   ref?: string;
+  /** Órgão onde a movimentação aconteceu, quando não é o de origem (ex.: a turma recursal). */
+  body?: string;
 }
 
 export interface Case {
@@ -81,6 +104,8 @@ export interface Case {
   parties: Party[];
   notes?: string;
   history: HistoryEntry[];
+  /** Instâncias por onde o processo passou, com o órgão, o número e o link da consulta pública de cada uma. */
+  instances?: CaseInstance[];
   createdAt: string;
   updatedAt: string;
 }
