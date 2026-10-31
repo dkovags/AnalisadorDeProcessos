@@ -6,6 +6,7 @@ import { RITES } from "../domain/deadlines";
 import { STATUS } from "../domain/labels";
 import { noticeDraft } from "../domain/noticedraft";
 import { precedentKey } from "../domain/precedents";
+import { remapRange } from "../domain/representation";
 import { fold, isUpper, sameParty, squash, titleCase } from "../domain/text";
 import type {
   Case, CaseStatus, ChecklistItem, Dataset, Doc, DocType, FileMeta, HistoryEntry, Holiday, ID, Notice, NoticeStatus, Party, Pole, Precedent, Prefs,
@@ -358,8 +359,15 @@ export function addDocs(
 export function importCaseFile(
   ds: Dataset,
   ctx: Ctx,
-  input: { file: FileMeta; info: CaseFileInfo; caseId?: ID; create?: CaseInput },
-): Result<{ caseId: ID; added: number; updated: number }> {
+  input: {
+    file: FileMeta;
+    info: CaseFileInfo;
+    caseId?: ID;
+    create?: CaseInput;
+    /** Documentos que a pessoa deixou de fora (ex.: substabelecimentos): se já estavam na base, saem dela. */
+    drop?: { courtId?: string; title: string }[];
+  },
+): Result<{ caseId: ID; added: number; updated: number; dropped: number }> {
   const ops: Op[] = [];
   let caseId = input.caseId;
   const { info } = input;
@@ -438,9 +446,17 @@ export function importCaseFile(
   let added = 0;
   let updated = 0;
   const repointed = new Set<ID>();
+  // deixados de fora agora, mas guardados numa importação anterior: saem da base
+  const dropped = new Set<ID>();
+  for (const fd of input.drop || []) {
+    const old = existing.get(keyOf(fd));
+    if (old && !dropped.has(old.id)) dropped.add(old.id);
+  }
+  if (dropped.size) ops.push(...removeDocsOps(ds, ctx, [...dropped]).filter((o) => o.t !== "del" || o.c !== "files"));
   for (const fd of info.docs) {
     if (fd.type === "processo") continue;
     const old = existing.get(keyOf(fd));
+    if (old && dropped.has(old.id)) continue;
     if (old) {
       ops.push(put("docs", { ...old, fileId: input.file.id, pages: fd.pages, parentId: parent.id }));
       repointed.add(old.id);
@@ -467,10 +483,39 @@ export function importCaseFile(
   }
   // processos integrais antigos que ficaram sem documentos próprios saem da base
   const stillUsed = new Set<ID>();
-  for (const d of Object.values(ds.docs)) if (!repointed.has(d.id) && d.type !== "processo") stillUsed.add(d.fileId);
+  for (const d of Object.values(ds.docs)) if (!repointed.has(d.id) && !dropped.has(d.id) && d.type !== "processo") stillUsed.add(d.fileId);
   for (const d of Object.values(ds.docs))
     if (d.caseId === caseId && d.type === "processo" && !stillUsed.has(d.fileId)) ops.push(del("docs", d.id), del("files", d.fileId));
-  return { ops, value: { caseId: caseId!, added, updated } };
+  return { ops, value: { caseId: caseId!, added, updated, dropped: dropped.size } };
+}
+
+/**
+ * Corta documentos de um arquivo já guardado (ex.: substabelecimentos e cartas de preposição de um processo integral).
+ * Com `file` e `map`, o arquivo foi refeito sem as páginas cortadas: os documentos que ficam passam para ele, com as
+ * páginas renumeradas, e o arquivo antigo sai da base.
+ */
+export function cutDocs(
+  ds: Dataset,
+  ctx: Ctx,
+  input: { fileId: ID; remove: ID[]; file?: FileMeta; map?: number[] },
+): Result<number> {
+  const old = ds.files[input.fileId];
+  if (!old) throw new UserError("Arquivo não encontrado.");
+  const remove = input.remove.filter((id) => ds.docs[id]?.fileId === input.fileId && ds.docs[id].type !== "processo");
+  const ops = removeDocsOps(ds, ctx, remove).filter((o) => o.t !== "del" || o.c !== "files");
+  if (input.file && input.map) {
+    const map = input.map;
+    ops.push(put("files", input.file));
+    for (const d of Object.values(ds.docs)) {
+      if (d.fileId !== input.fileId || remove.includes(d.id)) continue;
+      const pages = d.pages ? remapRange(d.pages, map) : undefined;
+      // documento todo cortado junto com os outros (sem página própria): sai também
+      if (d.pages && !pages) ops.push(...removeDocsOps(ds, ctx, [d.id]).filter((o) => o.t !== "del" || o.c !== "files"));
+      else ops.push(put("docs", { ...d, fileId: input.file.id, pages }));
+    }
+    ops.push(del("files", input.fileId));
+  }
+  return { ops, value: remove.length };
 }
 
 export function updateDoc(ds: Dataset, _ctx: Ctx, id: ID, patch: Partial<Pick<Doc, "title" | "type" | "date" | "caseId">>): Result<void> {

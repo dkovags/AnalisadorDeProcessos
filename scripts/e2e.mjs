@@ -66,11 +66,15 @@ async function makeCaseFilePdf(path, number) {
      <tr><td>40000001</td><td>15/03/2026 10:20</td><td>Petição Inicial</td><td>Petição Inicial</td></tr>
      <tr><td>40000002</td><td>15/03/2026 10:20</td><td>Procuração Ana</td><td>Procuração</td></tr>
      <tr><td>40000003</td><td>20/05/2026 14:00</td><td>Contestação Gama</td><td>Contestação</td></tr>
+     <tr><td>40000005</td><td>20/05/2026 14:00</td><td>Substabelecimento Gama</td><td>Substabelecimento</td></tr>
+     <tr><td>40000006</td><td>20/05/2026 14:00</td><td>Carta de Preposição Gama</td><td>Carta de Preposição</td></tr>
      <tr><td>40000004</td><td>02/10/2026 16:12</td><td>Despacho</td><td>Despacho</td></tr></table>`,
     `<h3>EXCELENTÍSSIMO SENHOR DOUTOR JUIZ DE DIREITO DA 5ª VARA CÍVEL DE MOSSORÓ</h3><p>ANA CLIENTE vem propor AÇÃO DE INDENIZAÇÃO POR DANOS MORAIS em face de TELEFONIA GAMA S.A., pela cobrança indevida e pela negativação do seu nome.</p>${stamp("40000001", 1)}`,
     `<p>Dos pedidos. Requer a condenação da ré ao pagamento de indenização por dano moral e a exclusão da negativação.</p>${stamp("40000001", 2)}`,
     `<h3>PROCURAÇÃO</h3><p>Outorgante: ANA CLIENTE. Outorgado: VOCÊ ADVOGADO.</p>${stamp("40000002", 1)}`,
     `<h3>CONTESTAÇÃO</h3><p>TELEFONIA GAMA S.A. sustenta a regularidade da cobrança e a inexistência de dano moral.</p>${stamp("40000003", 1)}`,
+    `<h3>SUBSTABELECIMENTO</h3><p>PEDRO DEFESA substabelece, com reserva de iguais poderes, os poderes recebidos de TELEFONIA GAMA S.A.</p>${stamp("40000005", 1)}`,
+    `<h3>CARTA DE PREPOSIÇÃO</h3><p>TELEFONIA GAMA S.A. credencia o preposto indicado para representá-la em audiência.</p>${stamp("40000006", 1)}`,
     `<h3>DESPACHO</h3><p>Intime-se a parte autora para, no prazo de 15 (quinze) dias, apresentar réplica à contestação, devendo juntar o extrato atualizado do SPC e comprovante de residência atualizado.</p><p>Após, conclusos.</p>${stamp("40000004", 1)}`,
   ];
   await renderPdf(path, pages);
@@ -208,7 +212,10 @@ try {
   await page.getByText("Conferir o processo").waitFor();
   await page.getByText("Partes encontradas: quem é o seu cliente?").waitFor();
   expect(await page.getByText(number).count(), "número do processo não foi lido da capa");
-  expect((await page.locator(".doc-preview-row").count()) === 5, `esperava 5 documentos, veio ${await page.locator(".doc-preview-row").count()}`);
+  expect((await page.locator(".doc-preview-row").count()) === 7, `esperava 7 documentos, veio ${await page.locator(".doc-preview-row").count()}`);
+  // substabelecimento e carta de preposição ficam de fora (e saem do PDF guardado)
+  const out = await page.locator(".doc-preview-row.out").allInnerTexts();
+  expect(out.length === 2 && /Substabelecimento/.test(out.join()) && /Preposição/.test(out.join()), `documentos de representação não marcados: ${JSON.stringify(out)}`);
   await shot(page, "05-importar-processo-integral");
   await page.getByRole("button", { name: "Criar o processo" }).click();
   await closed(page);
@@ -220,7 +227,19 @@ try {
   await page.getByRole("tab", { name: /Documentos/ }).click();
   await page.getByRole("button", { name: /\d+ documentos/ }).click();
   await page.getByText("Contestação Gama").waitFor();
+  const integral = page.locator(".doc-group-head .doc-row").first();
+  expect(/6 páginas/.test(await integral.innerText()), `o PDF guardado deveria ter 6 páginas: ${await integral.innerText()}`);
+  expect((await page.getByText("Substabelecimento Gama").count()) === 0, "o substabelecimento não deveria estar na base");
   await shot(page, "07-documentos");
+  // cortar depois da importação: a procuração sai da base e do PDF
+  await page.getByRole("button", { name: "Cortar documentos" }).click();
+  await page.getByLabel("Cortar Procuração Ana").check();
+  await shot(page, "07b-cortar-documentos");
+  await page.getByRole("button", { name: "Cortar 1 documento" }).click();
+  await closed(page);
+  await page.getByText(/1 documento cortado da base\. 1 página cortada do PDF\./).waitFor();
+  expect(/5 páginas/.test(await integral.innerText()), `depois do corte, o PDF deveria ter 5 páginas: ${await integral.innerText()}`);
+  expect((await page.getByText("Procuração Ana").count()) === 0, "a procuração cortada continua na lista");
 
   // pesquisa nos documentos do processo
   await page.getByLabel("Pesquisar nos documentos do processo").fill("negativação");

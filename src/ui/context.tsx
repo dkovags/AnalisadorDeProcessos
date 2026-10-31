@@ -72,6 +72,7 @@ export type Dialog =
   | { type: "notice"; caseId?: ID; noticeId?: ID; text?: string; docId?: ID }
   | { type: "task"; caseId?: ID; taskId?: ID; noticeId?: ID }
   | { type: "doc"; docId: ID; q?: string; page?: number }
+  | { type: "cut"; docId: ID }
   | { type: "precedent"; precedentId?: ID; text?: string; caseId?: ID }
   | { type: "note"; caseId: ID }
   | { type: "calculator" }

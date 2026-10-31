@@ -57,6 +57,12 @@ aplicativo e funciona sem internet.
   - no **e-SAJ**, pelo código da pasta digital;
   - em outros sistemas, pelos marcadores do PDF, quando houver.
 
+  Na importação, os documentos de representação que as partes juntam (substabelecimentos, cartas de preposição e
+  atos constitutivos, como contrato social, estatuto, atas e cartão do CNPJ) já vêm marcados para ficar de fora, e as
+  procurações podem sair também; as páginas deles são cortadas do PDF guardado, que fica menor. Na lista, dá para
+  marcar ou desmarcar qualquer documento. Num processo já importado, o botão **Cortar documentos**, na aba
+  **Documentos**, faz o mesmo corte depois.
+
   Quando um processo integral mais novo é importado, os documentos já guardados passam para o arquivo novo, sem
   duplicar. Também aceita documentos avulsos (PDF, Word, ODT, HTML e texto, inclusive colado) e o expediente. A
   pesquisa ignora acentos e maiúsculas, procura as palavras pelo começo, aceita "frase exata" e -exclusão, ordena por
@@ -95,8 +101,12 @@ aplicativo e funciona sem internet.
 
 ## Onde ficam os dados
 
-Tudo fica guardado só no navegador do aparelho (IndexedDB): processos, documentos e jurisprudência não vão para a
-internet, e a leitura dos PDFs e as análises são feitas no próprio navegador. A exceção é a busca no DJEN e no
+Tudo fica guardado só no navegador do aparelho, no banco de dados que o navegador reserva para cada *site*
+(IndexedDB): os registros (processos, expedientes, prazos, jurisprudência), o PDF de cada processo integral ou
+documento, já cortado quando é o caso, e o texto lido de cada página. Nada disso fica no GitHub nem na AWS, e cada
+aparelho (ou cada navegador do mesmo aparelho) tem a sua base. Em **Configurações > Dados** aparecem o espaço usado e
+o disponível. Os registros, os PDFs e as análises não vão para a internet, e a leitura dos arquivos é feita no próprio
+navegador. A exceção é a busca no DJEN e no
 DataJud, quando ligada: ela manda ao intermediário (e dele ao CNJ) o número da OAB, as datas da busca e os números dos
 processos. O endereço e a senha do intermediário ficam nas configurações e vão junto na cópia de segurança. Por isso:
 
@@ -196,6 +206,8 @@ src/domain/citations.ts    verificação das citações e do trecho citado
 src/domain/search.ts       pesquisa sem acentos, com pontuação e destaques
 src/store/                 ações, IndexedDB, leitura de arquivos (pdf.js, Word), cópia de segurança, exemplo
 src/store/cnjapi.ts        consultas ao DJEN e ao DataJud pelo intermediário
+src/domain/representation.ts  documentos de representação e a renumeração das páginas no corte
+src/store/pdfcut.ts        corte de páginas do PDF guardado (pdf-lib, carregado só quando precisa)
 src/ui/                    telas (React); ui/cnjsync.ts faz a busca diária no DJEN
 servidor/                  intermediário no Brasil (AWS Lambda) e o passo a passo para criá-lo
 public/                    ícones, manifesto e service worker (funciona sem internet)

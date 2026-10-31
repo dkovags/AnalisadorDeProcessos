@@ -2139,12 +2139,50 @@ svg.spin {
 
 .doc-preview-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   font-size: 14px;
+  cursor: pointer;
+}
+
+.doc-preview-row.out > span:not(.chip) {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.doc-preview-row .chip.tone-warn {
+  margin-left: 6px;
+  text-decoration: none;
+}
+
+.doc-preview.tall {
+  max-height: min(55vh, 460px);
+  margin-bottom: 12px;
+}
+
+.cut-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.cut-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.cut-box p {
+  margin: 0;
 }
 
 .deadline-box {
@@ -2497,6 +2535,31 @@ body.modal-open .toasts {
 
   body.modal-open .toasts {
     bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+
+  .doc-preview-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .doc-preview-row > .chip.tone-muted {
+    display: none;
+  }
+
+  .doc-preview-row > .muted {
+    grid-column: 2;
+  }
+
+  .doc-group-head {
+    flex-wrap: wrap;
+    padding-bottom: 6px;
+  }
+
+  .doc-group-head .doc-row {
+    flex-basis: 100%;
+  }
+
+  .doc-group-head > .btn {
+    margin-left: 10px;
   }
 }
 

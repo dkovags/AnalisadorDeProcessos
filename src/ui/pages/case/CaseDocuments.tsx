@@ -1,8 +1,9 @@
-import { ChevronDown, FileStack, FileText, Search, Sparkles, Trash } from "lucide-react";
+import { ChevronDown, FileStack, FileText, Scissors, Search, Sparkles, Trash } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { courtRef } from "../../../domain/casefile";
 import { formatDate } from "../../../domain/dates";
 import { DOC_TYPES, ORDER_TYPES } from "../../../domain/labels";
+import { representationOf } from "../../../domain/representation";
 import { docsOfCase } from "../../../domain/select";
 import type { Case, Doc, DocType } from "../../../domain/types";
 import * as A from "../../../store/actions";
@@ -163,6 +164,7 @@ export function CaseDocuments({ c, q: initialQ }: { c: Case; q?: string }) {
           {parents.map((p) => {
             const kids = children(p.id);
             const isOpen = openGroups[p.id] ?? false;
+            const reps = kids.filter((d) => representationOf(d) === "representacao").length;
             return (
               <div key={p.id} className="doc-group">
                 <div className="doc-group-head">
@@ -170,6 +172,15 @@ export function CaseDocuments({ c, q: initialQ }: { c: Case; q?: string }) {
                   {kids.length > 0 && (
                     <button className="btn btn-ghost btn-sm" onClick={() => setOpenGroups({ ...openGroups, [p.id]: !isOpen })}>
                       <ChevronDown size={14} className={isOpen ? "rot" : ""} /> {kids.length} documentos
+                    </button>
+                  )}
+                  {kids.length > 0 && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      title="Tirar da base (e do PDF) substabelecimentos, cartas de preposição, atos constitutivos e o que mais escolher"
+                      onClick={() => ui.open({ type: "cut", docId: p.id })}
+                    >
+                      <Scissors size={14} /> {reps ? `Cortar ${reps} de representação` : "Cortar documentos"}
                     </button>
                   )}
                 </div>

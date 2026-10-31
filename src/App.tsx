@@ -8,6 +8,7 @@ import { Shell } from "./ui/components/Shell";
 import { useDjenAutoSync } from "./ui/cnjsync";
 import { StoreProvider, UIContext, useDatasetOrNull, useStatus, useStore, useToday, useUI, type Dialog, type Toast, type UI } from "./ui/context";
 import { CaseDialog } from "./ui/dialogs/CaseDialog";
+import { CutDialog } from "./ui/dialogs/CutDialog";
 import { DocViewer } from "./ui/dialogs/DocViewer";
 import { ImportDialog } from "./ui/dialogs/ImportDialog";
 import { NoticeDialog } from "./ui/dialogs/NoticeDialog";
@@ -105,6 +106,8 @@ function DialogHost() {
             return <TaskDialog key={key} caseId={d.caseId} taskId={d.taskId} noticeId={d.noticeId} onClose={close} />;
           case "doc":
             return <DocViewer key={key} docId={d.docId} q={d.q} page={d.page} onClose={close} />;
+          case "cut":
+            return <CutDialog key={key} docId={d.docId} onClose={close} />;
           case "precedent":
             return <PrecedentDialog key={key} precedentId={d.precedentId} text={d.text} caseId={d.caseId} onClose={close} />;
           case "note":

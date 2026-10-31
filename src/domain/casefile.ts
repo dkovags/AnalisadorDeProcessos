@@ -44,6 +44,8 @@ export interface LayoutSegment {
 export interface FileDoc {
   courtId?: string;
   title: string;
+  /** Tipo do documento como o sistema do tribunal o chama ("Carta de Preposição", "Atos Constitutivos"). */
+  label?: string;
   type: DocType;
   date?: string;
   signer?: string;
@@ -281,6 +283,7 @@ function parsePje(pages: string[], info: CaseFileInfo) {
       current = {
         courtId: m[1],
         title: entry?.title || DOC_TYPES[type],
+        label: entry?.typeLabel,
         type,
         date: entry?.date || (signed ? findDates(signed[2])[0]?.iso : undefined),
         signer: signed ? titleCase(signed[1]) : undefined,

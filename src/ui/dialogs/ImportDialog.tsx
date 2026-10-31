@@ -1,17 +1,19 @@
-import { CalendarClock, FileStack, Files, TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { CalendarClock, FileStack, Files, Scissors, TriangleAlert } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { APP_NAME } from "../../config";
 import { analyze, classifyText } from "../../domain/analysis";
 import { courtRef, parseCaseFile, type CaseFileInfo } from "../../domain/casefile";
 import { formatDate } from "../../domain/dates";
 import { findDates } from "../../domain/text";
 import { DOC_TYPES, POLES } from "../../domain/labels";
+import { pageMap, pagesToCut, remapRange, representationOf, type RepresentationKind } from "../../domain/representation";
 import { caseLabel } from "../../domain/select";
 import type { DocType, FileMeta } from "../../domain/types";
 import * as A from "../../store/actions";
-import { paginate, type Extracted } from "../../store/extract";
+import { kindOf, paginate, type Extracted } from "../../store/extract";
 import { newId } from "../../store/ids";
 import { persistStorage, readFileText, sha256 } from "../../store/ingest";
+import { cutPdf, PdfCutError } from "../../store/pdfcut";
 import { run } from "../../store/store";
 import { Field, fileSize, Modal } from "../components/basics";
 import { DropZone } from "../components/DropZone";
@@ -81,6 +83,21 @@ export function ImportDialog({
   const [info, setInfo] = useState<CaseFileInfo | null>(null);
   const [target, setTarget] = useState<string>(caseId || "");
   const [clientIdx, setClientIdx] = useState(0);
+  // documentos de representação: ficam de fora da base e, se a pessoa quiser, saem do PDF guardado
+  const [cutRep, setCutRep] = useState(true);
+  const [cutProc, setCutProc] = useState(false);
+  const [cutFromPdf, setCutFromPdf] = useState(true);
+  const [keep, setKeep] = useState<Record<number, boolean>>({});
+  const kinds = useMemo<(RepresentationKind | undefined)[]>(() => info?.docs.map((d) => representationOf(d)) || [], [info]);
+  const isOut = (i: number) => (keep[i] !== undefined ? !keep[i] : (kinds[i] === "representacao" && cutRep) || (kinds[i] === "procuracao" && cutProc));
+  const outCount = info ? info.docs.filter((_, i) => isOut(i)).length : 0;
+  const repCount = kinds.filter((k) => k === "representacao").length;
+  const procCount = kinds.filter((k) => k === "procuracao").length;
+  /** Liga ou desliga uma categoria, desfazendo as escolhas feitas à mão nos documentos dela. */
+  const toggleKind = (kind: RepresentationKind, on: boolean) => {
+    (kind === "representacao" ? setCutRep : setCutProc)(on);
+    setKeep((k) => Object.fromEntries(Object.entries(k).filter(([i]) => kinds[Number(i)] !== kind)));
+  };
   const started = useRef(false);
   const cases = Object.values(ds.cases).sort((a, b) => caseLabel(a).localeCompare(caseLabel(b), "pt-BR"));
 
@@ -125,6 +142,7 @@ export function ImportDialog({
     if (mode === "processo" && out[0]) {
       const parsed = parseCaseFile(out[0].text.pages, { outline: out[0].text.outline, layout: out[0].text.layout });
       setInfo(parsed);
+      setKeep({});
       const existing = caseId || (parsed.number ? A.findCaseByNumber(ds, parsed.number)?.id : undefined) || "";
       setTarget(existing);
       setClientIdx(0);
@@ -161,10 +179,38 @@ export function ImportDialog({
     void persistStorage();
     try {
       if (mode === "processo" && info && items[0]) {
-        const meta = await saveFileOf(items[0]);
+        const out = info.docs.filter((_, i) => isOut(i));
+        let docs = info.docs.filter((_, i) => !isOut(i));
+        let it = items[0];
+        let cutPages = 0;
+        let cutNote = "";
+        if (out.length && cutFromPdf && it.file && kindOf(it.name, it.mime) === "pdf") {
+          const total = it.text.pages.length;
+          const cut = pagesToCut(total, out.map((d) => d.pages), docs.map((d) => d.pages));
+          if (cut.size && cut.size < total) {
+            try {
+              const map = pageMap(total, cut);
+              const bytes = await cutPdf(new Uint8Array(await it.file.arrayBuffer()), map);
+              const pages = it.text.pages.filter((_, i) => map[i + 1]);
+              const empty = it.text.empty.filter((p) => map[p]).map((p) => map[p]);
+              const layout = it.text.layout?.filter((_, i) => map[i + 1]);
+              it = { ...it, file: new File([bytes as BlobPart], it.name, { type: "application/pdf" }), size: bytes.byteLength, text: { ...it.text, pages, empty, layout } };
+              docs = docs.flatMap((d) => {
+                const pages = remapRange(d.pages, map);
+                return pages ? [{ ...d, pages }] : [];
+              });
+              cutPages = cut.size;
+            } catch (e) {
+              console.error(e);
+              cutNote = ` O PDF ficou inteiro (${e instanceof PdfCutError ? e.message : "não deu para cortar"}): os documentos saíram da lista, mas as páginas continuam no arquivo.`;
+            }
+          }
+        }
+        const meta = await saveFileOf(it);
         const res = run(store, A.importCaseFile, {
           file: meta,
-          info,
+          info: { ...info, docs },
+          drop: out,
           caseId: target || undefined,
           create: target
             ? undefined
@@ -195,7 +241,10 @@ export function ImportDialog({
               },
         });
         onClose();
-        ui.toast(`Processo integral guardado: ${res.added} documentos novos${res.updated ? `, ${res.updated} atualizados` : ""}.`);
+        const left = out.length
+          ? ` ${out.length === 1 ? "1 documento de representação ficou" : `${out.length} documentos de representação ficaram`} de fora${cutPages ? ` (${cutPages === 1 ? "1 página cortada" : `${cutPages} páginas cortadas`} do PDF)` : ""}.`
+          : "";
+        ui.toast(`Processo integral guardado: ${res.added} documentos novos${res.updated ? `, ${res.updated} atualizados` : ""}.${left}${cutNote}`, cutNote ? { kind: "error" } : undefined);
         navigate(casePath(res.caseId, "documentos"));
         return;
       }
@@ -412,6 +461,28 @@ export function ImportDialog({
               <h3 className="form-section">
                 {info.docs.length} {info.docs.length === 1 ? "documento" : "documentos"} em {items[0]?.text.pages.length} páginas
               </h3>
+              <div className="cut-box">
+                <div className="cut-title">
+                  <Scissors size={16} /> Documentos de representação
+                </div>
+                <label className="check">
+                  <input type="checkbox" checked={cutRep} onChange={(e) => toggleKind("representacao", e.target.checked)} /> Deixar de fora substabelecimentos,
+                  cartas de preposição e atos constitutivos (contrato social, estatuto, atas, cartão do CNPJ)
+                  <span className="muted"> ({repCount === 1 ? "1 encontrado" : `${repCount} encontrados`})</span>
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={cutProc} onChange={(e) => toggleKind("procuracao", e.target.checked)} /> Deixar de fora também as procurações
+                  <span className="muted"> ({procCount === 1 ? "1 encontrada" : `${procCount} encontradas`}; a do cliente pode servir para instruir petições)</span>
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={cutFromPdf} onChange={(e) => setCutFromPdf(e.target.checked)} /> Cortar do PDF guardado as páginas que ficarem de
+                  fora (o arquivo fica menor; o original continua no sistema do tribunal)
+                </label>
+                <p className="muted small">
+                  {outCount ? `${outCount === 1 ? "1 documento fica" : `${outCount} documentos ficam`} de fora.` : "Nenhum documento fica de fora."} Desmarque na lista
+                  abaixo qualquer documento que não quiser guardar, ou marque os que quiser manter.
+                </p>
+              </div>
               {!!info.events?.length && (
                 <p className="muted small">
                   {info.events.length === 1 ? "1 movimentação (evento) entra" : `${info.events.length} movimentações (eventos) entram`} nos andamentos do
@@ -419,18 +490,21 @@ export function ImportDialog({
                 </p>
               )}
               <div className="doc-preview">
-                {info.docs.slice(0, 60).map((d, i) => (
-                  <div key={i} className="doc-preview-row">
+                {info.docs.map((d, i) => (
+                  <label key={i} className={`doc-preview-row ${isOut(i) ? "out" : ""}`}>
+                    <input type="checkbox" checked={!isOut(i)} onChange={(e) => setKeep((k) => ({ ...k, [i]: e.target.checked }))} aria-label={`Guardar ${d.title}`} />
                     <span className="chip tone-muted">{DOC_TYPES[d.type]}</span>
-                    <span>{d.title}</span>
+                    <span>
+                      {d.title}
+                      {isOut(i) && <span className="chip tone-warn">fica de fora</span>}
+                    </span>
                     <span className="muted small">
                       {[courtRef(d.courtId), d.date && formatDate(d.date), `p. ${d.pages[0]}${d.pages[1] > d.pages[0] ? `–${d.pages[1]}` : ""}`]
                         .filter(Boolean)
                         .join(" · ")}
                     </span>
-                  </div>
+                  </label>
                 ))}
-                {info.docs.length > 60 && <div className="muted small">e mais {info.docs.length - 60}…</div>}
               </div>
             </div>
           ) : (
