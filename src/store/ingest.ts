@@ -5,10 +5,18 @@ import { extractBytes, type Extracted, type PdfJs } from "./extract";
 let pdfjsPromise: Promise<PdfJs> | null = null;
 
 function loadPdfJs(): Promise<PdfJs> {
-  pdfjsPromise ||= Promise.all([import("pdfjs-dist"), import("pdfjs-dist/build/pdf.worker.min.mjs?url")]).then(([pdfjs, worker]) => {
-    pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-    return pdfjs as unknown as PdfJs;
-  });
+  pdfjsPromise ||= Promise.all([import("pdfjs-dist"), import("pdfjs-dist/build/pdf.worker.min.mjs?url")])
+    .then(([pdfjs, worker]) => {
+      // o módulo não veio (a página está sendo recarregada para pegar a versão nova)
+      if (!pdfjs?.getDocument || !worker?.default) throw new Error("Failed to fetch dynamically imported module (leitor de PDF)");
+      pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+      return pdfjs as unknown as PdfJs;
+    })
+    .catch((e) => {
+      // falhou (sem internet, versão nova publicada): a próxima tentativa baixa de novo
+      pdfjsPromise = null;
+      throw e;
+    });
   return pdfjsPromise;
 }
 

@@ -16,6 +16,7 @@ import { PrecedentDialog } from "./ui/dialogs/PrecedentDialog";
 import { CalculatorDialog, NoteDialog } from "./ui/dialogs/SmallDialogs";
 import { TaskDialog } from "./ui/dialogs/TaskDialog";
 import { notifyDeadlines } from "./ui/notify";
+import { takeUpdateNotice } from "./ui/update";
 import { AgendaPage } from "./ui/pages/Agenda";
 import { CasePage } from "./ui/pages/CasePage";
 import { CasesPage } from "./ui/pages/Cases";
@@ -209,6 +210,7 @@ function Main({ memory }: { memory: boolean }) {
   useDjenAutoSync();
   useEffect(() => store.onError((msg) => ui.toast(msg, { kind: "error" })), [store, ui]);
   useEffect(() => {
+    if (takeUpdateNotice()) ui.toast(`O ${APP_NAME} foi atualizado para a versão nova. Se você estava enviando um arquivo, envie de novo.`);
     if (memory) ui.toast("O navegador não deixou guardar dados: o que você fizer some ao fechar a página (aba anônima?).", { kind: "error" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memory]);

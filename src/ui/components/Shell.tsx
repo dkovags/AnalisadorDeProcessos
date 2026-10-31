@@ -5,6 +5,7 @@ import { agenda } from "../../domain/select";
 import { useData, useIsMobile, useToday } from "../context";
 import { href, navigate, useRoute, type Route } from "../router";
 import { Logo } from "./basics";
+import { UpdateBar } from "../update";
 
 interface NavItem {
   to: string;
@@ -112,7 +113,10 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="app">
       {mobile ? <TopBar route={route} /> : <SideNav route={route} />}
-      <main className="main">{children}</main>
+      <main className="main">
+        <UpdateBar />
+        {children}
+      </main>
       {mobile && <TabBar route={route} />}
     </div>
   );

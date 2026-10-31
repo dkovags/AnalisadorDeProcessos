@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { APP_NAME } from "../../config";
 import { analyze, classifyText } from "../../domain/analysis";
 import { courtRef, parseCaseFile, type CaseFileInfo } from "../../domain/casefile";
+import { cnjInFileName } from "../../domain/cnj";
 import { formatDate } from "../../domain/dates";
 import { findDates } from "../../domain/text";
 import { DOC_TYPES, POLES } from "../../domain/labels";
@@ -19,6 +20,7 @@ import { Field, fileSize, Modal } from "../components/basics";
 import { DropZone } from "../components/DropZone";
 import { useData, useStore, useToday, useUI } from "../context";
 import { casePath, navigate } from "../router";
+import { isReloading, isStaleChunk, reloadForUpdate } from "../update";
 
 type Mode = "processo" | "documento" | "expediente";
 
@@ -82,6 +84,7 @@ export function ImportDialog({
   const [paste, setPaste] = useState("");
   const [info, setInfo] = useState<CaseFileInfo | null>(null);
   const [target, setTarget] = useState<string>(caseId || "");
+  const [numberFromName, setNumberFromName] = useState(false);
   const [clientIdx, setClientIdx] = useState(0);
   // documentos de representação: ficam de fora da base e, se a pessoa quiser, saem do PDF guardado
   const [cutRep, setCutRep] = useState(true);
@@ -134,13 +137,24 @@ export function ImportDialog({
       }
     } catch (e) {
       console.error(e);
-      ui.toast(`Não foi possível ler o arquivo: ${(e as Error).message || e}`, { kind: "error" });
+      // aba aberta antes de uma versão nova: o leitor de PDF desta versão não está mais no site
+      if (isStaleChunk(e) && (isReloading() || reloadForUpdate())) return;
+      ui.toast(
+        isStaleChunk(e)
+          ? `O ${APP_NAME} foi atualizado e precisa ser recarregado: recarregue a página e envie o arquivo de novo.`
+          : `Não foi possível ler o arquivo: ${(e as Error).message || e}`,
+        { kind: "error" },
+      );
       setStep("choose");
       return;
     }
     setItems(out);
     if (mode === "processo" && out[0]) {
       const parsed = parseCaseFile(out[0].text.pages, { outline: out[0].text.outline, layout: out[0].text.layout });
+      // sem o número no texto (ex.: PDF só de imagens), o nome do arquivo baixado do tribunal costuma trazê-lo
+      const fromName = parsed.number ? undefined : cnjInFileName(out[0].name);
+      if (fromName) parsed.number = fromName;
+      setNumberFromName(!!fromName);
       setInfo(parsed);
       setKeep({});
       const existing = caseId || (parsed.number ? A.findCaseByNumber(ds, parsed.number)?.id : undefined) || "";
@@ -397,21 +411,35 @@ export function ImportDialog({
               <span>Este arquivo já foi enviado antes ({items.find((it) => it.duplicateOf)?.duplicateOf}). Se continuar, ele fica duplicado na base.</span>
             </div>
           )}
-          {scanned > 0 && (
-            <div className="banner warn small">
+          {scanned > 0 && scanned === pagesTotal ? (
+            <div className="banner danger small">
               <TriangleAlert size={18} />
               <span>
-                {scanned === pagesTotal ? "O arquivo não tem texto" : `${scanned} de ${pagesTotal} páginas não têm texto`} (imagem digitalizada): elas ficam guardadas, mas a
-                pesquisa não as alcança. Se puder, baixe a versão com texto (OCR) no sistema do tribunal.
+                Nenhuma {pagesTotal === 1 ? "página" : `das ${pagesTotal} páginas`} tem texto: o PDF foi gerado como imagem (impressão para PDF, digitalização ou cópia
+                da tela). Sem texto, o {APP_NAME} não consegue ler o número, as partes nem separar os documentos, e a pesquisa não alcança o arquivo. Baixe o
+                processo pela opção de download do próprio sistema do tribunal, que costuma gerar o PDF com texto, e envie de novo.
               </span>
             </div>
+          ) : (
+            scanned > 0 && (
+              <div className="banner warn small">
+                <TriangleAlert size={18} />
+                <span>
+                  {scanned} de {pagesTotal} páginas não têm texto (imagem digitalizada): elas ficam guardadas, mas a pesquisa não as alcança. Se puder, baixe a versão
+                  com texto (OCR) no sistema do tribunal.
+                </span>
+              </div>
+            )
           )}
           {mode === "processo" && info ? (
             <div className="review">
               <dl className="infos">
                 <div className="info-row">
                   <dt>Número</dt>
-                  <dd className="mono">{info.number || "não encontrado"}</dd>
+                  <dd className="mono">
+                    {info.number || "não encontrado"}
+                    {info.number && numberFromName && <span className="muted small"> (lido do nome do arquivo)</span>}
+                  </dd>
                 </div>
                 {info.system && (
                   <div className="info-row">
@@ -461,28 +489,30 @@ export function ImportDialog({
               <h3 className="form-section">
                 {info.docs.length} {info.docs.length === 1 ? "documento" : "documentos"} em {items[0]?.text.pages.length} páginas
               </h3>
-              <div className="cut-box">
-                <div className="cut-title">
-                  <Scissors size={16} /> Documentos de representação
+              {info.docs.length > 1 && (
+                <div className="cut-box">
+                  <div className="cut-title">
+                    <Scissors size={16} /> Documentos de representação
+                  </div>
+                  <label className="check">
+                    <input type="checkbox" checked={cutRep} onChange={(e) => toggleKind("representacao", e.target.checked)} /> Deixar de fora substabelecimentos,
+                    cartas de preposição e atos constitutivos (contrato social, estatuto, atas, cartão do CNPJ)
+                    <span className="muted"> ({repCount === 1 ? "1 encontrado" : `${repCount} encontrados`})</span>
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={cutProc} onChange={(e) => toggleKind("procuracao", e.target.checked)} /> Deixar de fora também as procurações
+                    <span className="muted"> ({procCount === 1 ? "1 encontrada" : `${procCount} encontradas`}; a do cliente pode servir para instruir petições)</span>
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={cutFromPdf} onChange={(e) => setCutFromPdf(e.target.checked)} /> Cortar do PDF guardado as páginas que ficarem de
+                    fora (o arquivo fica menor; o original continua no sistema do tribunal)
+                  </label>
+                  <p className="muted small">
+                    {outCount ? `${outCount === 1 ? "1 documento fica" : `${outCount} documentos ficam`} de fora.` : "Nenhum documento fica de fora."} Desmarque na lista
+                    abaixo qualquer documento que não quiser guardar, ou marque os que quiser manter.
+                  </p>
                 </div>
-                <label className="check">
-                  <input type="checkbox" checked={cutRep} onChange={(e) => toggleKind("representacao", e.target.checked)} /> Deixar de fora substabelecimentos,
-                  cartas de preposição e atos constitutivos (contrato social, estatuto, atas, cartão do CNPJ)
-                  <span className="muted"> ({repCount === 1 ? "1 encontrado" : `${repCount} encontrados`})</span>
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={cutProc} onChange={(e) => toggleKind("procuracao", e.target.checked)} /> Deixar de fora também as procurações
-                  <span className="muted"> ({procCount === 1 ? "1 encontrada" : `${procCount} encontradas`}; a do cliente pode servir para instruir petições)</span>
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={cutFromPdf} onChange={(e) => setCutFromPdf(e.target.checked)} /> Cortar do PDF guardado as páginas que ficarem de
-                  fora (o arquivo fica menor; o original continua no sistema do tribunal)
-                </label>
-                <p className="muted small">
-                  {outCount ? `${outCount === 1 ? "1 documento fica" : `${outCount} documentos ficam`} de fora.` : "Nenhum documento fica de fora."} Desmarque na lista
-                  abaixo qualquer documento que não quiser guardar, ou marque os que quiser manter.
-                </p>
-              </div>
+              )}
               {!!info.events?.length && (
                 <p className="muted small">
                   {info.events.length === 1 ? "1 movimentação (evento) entra" : `${info.events.length} movimentações (eventos) entram`} nos andamentos do

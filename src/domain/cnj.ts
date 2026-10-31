@@ -101,3 +101,10 @@ export function checkCaseNumber(s: string): CnjCheck | null {
     return { valid: false, formatted, court, message: `Ano ${c.year} fora do esperado.` };
   return { valid: true, formatted, court };
 }
+
+/** Número CNJ no nome de um arquivo ("0801234-56.2023.8.20.5001-processo.pdf", "RJ-30053780720268190021-2026-7-14.pdf"). */
+export function cnjInFileName(name: string): string | undefined {
+  const found = [...name.matchAll(/(?<!\d)(\d{7})[-.]?(\d{2})\.?(\d{4})\.?(\d)\.?(\d{2})\.?(\d{4})(?!\d)/g)].map((m) => m.slice(1).join(""));
+  const pick = found.find((d) => isValidCnj(d)) || found[0];
+  return pick ? normalizeCaseNumber(pick) : undefined;
+}

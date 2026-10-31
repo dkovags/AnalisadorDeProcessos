@@ -24,8 +24,10 @@ const shot = async (page, name) => {
 };
 function watch(page) {
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
-  // respostas de erro do intermediário simulado (senha errada, de propósito) não contam como erro do app
-  page.on("console", (m) => m.type() === "error" && !/intermediario\.exemplo/.test(m.location()?.url || "") && errors.push(`console: ${m.text()} (${m.location()?.url || ""})`));
+  // não contam como erro do app: as respostas de erro do intermediário simulado (senha errada, de propósito) e o leitor de
+  // PDF que o teste faz sumir do site para simular uma versão nova publicada
+  const expected = (m) => /intermediario\.exemplo/.test(m.location()?.url || "") || /\/assets\/pdf-|dynamically imported module/.test(`${m.text()} ${m.location()?.url || ""}`);
+  page.on("console", (m) => m.type() === "error" && !expected(m) && errors.push(`console: ${m.text()} (${m.location()?.url || ""})`));
 }
 const closed = (page) => page.locator(".overlay").first().waitFor({ state: "detached" });
 function expect(cond, msg) {
@@ -48,6 +50,22 @@ async function renderPdf(path, pages, { outline = false } = {}) {
     table { border-collapse: collapse } td, th { padding: 2px 12px 2px 0; text-align: left; vertical-align: top }
   </style></head><body>${pages.map((p) => `<div class="p">${p}</div>`).join("")}</body></html>`);
   await page.pdf({ path, format: "A4", margin: { top: 0, bottom: 0, left: 0, right: 0 }, outline, tagged: outline });
+  await page.close();
+}
+
+/** PDF só de imagens (como um processo impresso para PDF ou digitalizado): o texto é desenhado num canvas, sem camada de texto. */
+async function makeImagePdf(path, pages = 2) {
+  const page = await browser.newPage();
+  await page.setContent(`<html><body style="margin:0">${Array.from({ length: pages }, (_, i) => `<canvas id="c${i}" width="700" height="980" style="display:block;page-break-after:always"></canvas>`).join("")}
+    <script>
+      document.querySelectorAll("canvas").forEach((c, i) => {
+        const x = c.getContext("2d");
+        x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.fillStyle = "#000"; x.font = "22px Arial";
+        x.fillText("PODER JUDICIÁRIO - PROCESSO DIGITALIZADO", 40, 80);
+        x.fillText("Página " + (i + 1), 40, 940);
+      });
+    </script></body></html>`);
+  await page.pdf({ path, format: "A4", margin: { top: 0, bottom: 0, left: 0, right: 0 } });
   await page.close();
 }
 
@@ -176,7 +194,8 @@ Também: STJ, REsp 1.111.111/SP, Rel. Min. Fulano Beltrano, Sétima Turma, j. 10
 Aplica-se a Súmula 297 do STJ e, por analogia, a Súmula 800 do STF.`;
 
 try {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "pt-BR", reducedMotion: "reduce", acceptDownloads: true });
+  // sem service worker aqui, para o teste poder simular arquivos que sumiram do site
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "pt-BR", reducedMotion: "reduce", acceptDownloads: true, serviceWorkers: "block" });
   const page = await ctx.newPage();
   watch(page);
   await page.goto(URL);
@@ -206,6 +225,13 @@ try {
   const pdfPath = `${OUT}/processo-integral.pdf`;
   await makeCaseFilePdf(pdfPath, number);
   expect(statSync(pdfPath).size > 1000, "PDF de teste não foi gerado");
+  // versão nova publicada com a aba aberta: o leitor de PDF da versão antiga sumiu do site, e o app recarrega sozinho
+  await page.reload();
+  await page.route(/\/assets\/pdf-[\w-]+\.js$/, (route) => route.fulfill({ status: 404, body: "" }), { times: 1 });
+  await page.goto(URL + "#/processos");
+  await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
+  await page.locator(".modal input[type=file]").setInputFiles(pdfPath);
+  await page.getByText(/foi atualizado para a versão nova/).waitFor();
   await page.goto(URL + "#/processos");
   await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
   await page.locator(".modal input[type=file]").setInputFiles(pdfPath);
@@ -240,6 +266,7 @@ try {
   await page.getByText(/1 documento cortado da base\. 1 página cortada do PDF\./).waitFor();
   expect(/5 páginas/.test(await integral.innerText()), `depois do corte, o PDF deveria ter 5 páginas: ${await integral.innerText()}`);
   expect((await page.getByText("Procuração Ana").count()) === 0, "a procuração cortada continua na lista");
+
 
   // pesquisa nos documentos do processo
   await page.getByLabel("Pesquisar nos documentos do processo").fill("negativação");
@@ -356,6 +383,20 @@ try {
   await closed(page);
   await page.getByText("Parte em comum com os seus processos").waitFor();
   await shot(page, "11-jurisprudencia");
+
+  // PDF só de imagens: avisa que não há texto e lê o número do processo no nome do arquivo
+  const imgNumber = cnj("0807777", "2026", "8", "20", "5106");
+  const imgPath = `${OUT}/${imgNumber}-processo.pdf`;
+  await makeImagePdf(imgPath);
+  await page.goto(URL + "#/processos");
+  await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
+  await page.locator(".modal input[type=file]").setInputFiles(imgPath);
+  await page.getByText(/Nenhuma das 2 páginas tem texto/).waitFor();
+  await page.getByText("(lido do nome do arquivo)").waitFor();
+  expect(await page.getByText(imgNumber).count(), "número do nome do arquivo não apareceu");
+  await shot(page, "07c-pdf-sem-texto");
+  await page.keyboard.press("Escape");
+  await closed(page);
 
   // verificação de citações
   await page.goto(URL + "#/citacoes");

@@ -5,6 +5,12 @@ import "./styles.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { reloadForUpdate } from "./ui/update";
+
+// versão nova publicada com a aba aberta: um pedaço do app (como o leitor de PDF) sumiu do site; recarrega para pegar a nova
+window.addEventListener("vite:preloadError", (e) => {
+  if (reloadForUpdate()) e.preventDefault();
+});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -186,7 +186,12 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
   fica guardado como um documento só, pesquisável do mesmo jeito, e as partes podem ser completadas à mão. Quando o
   eproc divide o *download* em partes ("Parte 1", "Parte 2"...), importe cada parte no mesmo processo.
 - Páginas digitalizadas sem texto (imagem) ficam guardadas, mas não entram na pesquisa: o Analisador de Processos avisa quando isso
-  acontece. Prefira baixar o processo com texto (OCR) no sistema do tribunal.
+  acontece. Prefira baixar o processo com texto (OCR) no sistema do tribunal. Se o PDF inteiro for imagem (impresso para
+  PDF ou digitalizado), não há como ler a capa nem separar os documentos; o número do processo, se estiver no nome do
+  arquivo, é aproveitado.
+- Atualizações: quando sai uma versão nova, uma faixa no alto da tela avisa e oferece **Atualizar agora**. Se uma aba
+  aberta antes da atualização precisar de uma parte que mudou (como o leitor de PDF), o aplicativo recarrega sozinho e
+  pede para enviar o arquivo de novo.
 - A verificação de citações não consulta os tribunais: "fora da base" quer dizer que a decisão ainda não foi
   cadastrada, não que ela não exista. Os *links* levam à pesquisa no *site* do tribunal; depois de conferir, cadastre a
   decisão e marque **Conferi os dados na fonte oficial**.

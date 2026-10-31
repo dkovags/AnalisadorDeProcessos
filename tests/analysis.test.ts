@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyze, classifyText, explicitTerms, requestedDocs } from "../src/domain/analysis";
 import { courtRef, eprocDoc, eventText, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
-import { cnjCheckDigits, formatCnj } from "../src/domain/cnj";
+import { cnjCheckDigits, cnjInFileName, formatCnj } from "../src/domain/cnj";
 import { fold } from "../src/domain/text";
 
 const DJEN = `Processo: 0801234-56.2023.8.20.5001
@@ -82,6 +82,12 @@ Emende a parte autora a petição inicial, no prazo de 15 dias, sob pena de inde
     expect(a.suggestions[0]).toMatchObject({ rule: "pagamento_cumprimento", days: 15 });
     expect(a.suggestions.map((s) => s.rule)).not.toContain("sentenca");
     expect(a.status?.status).toBe("execucao");
+  });
+
+  it("acha o número do processo no nome do arquivo baixado", () => {
+    expect(cnjInFileName("0801234-56.2023.8.20.5001-1690000000000-processo.pdf")).toBe("0801234-56.2023.8.20.5001");
+    expect(cnjInFileName("RJ-30053780720268190021-2026-7-14-10-47-51.pdf")).toBe("3005378-07.2026.8.19.0021");
+    expect(cnjInFileName("processo completo.pdf")).toBeUndefined();
   });
 
   it("resposta ao agravo é contrarrazões", () => {

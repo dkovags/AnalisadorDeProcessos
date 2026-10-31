@@ -1,8 +1,8 @@
 // Service worker do Analisador de Processos: deixa o app abrir sem internet.
-// Página: rede primeiro (para receber atualizações), cópia salva se estiver offline.
+// Página: rede primeiro, conferida no site a cada abertura (para receber atualizações); cópia salva se estiver offline.
 // Arquivos com hash no nome (JS, CSS, fontes, o leitor de PDF): cópia salva primeiro, pois nunca mudam.
 // Os dados (processos e arquivos) ficam no IndexedDB e não passam por aqui.
-const CACHE = "autos-v1";
+const CACHE = "autos-v2";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./manifest.webmanifest", "./icon.svg"])));
@@ -22,6 +22,8 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
+  // aviso de versão nova: sempre do site
+  if (url.pathname.endsWith("/version.json")) return;
   const immutable = url.pathname.includes("/assets/");
   if (immutable) {
     event.respondWith(
@@ -36,8 +38,10 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+  // a página sempre conferida no site (sem usar a cópia do navegador), para não abrir uma versão antiga depois de uma publicação
+  const fresh = req.mode === "navigate" ? fetch(req.url, { cache: "no-cache", credentials: "same-origin" }) : fetch(req);
   event.respondWith(
-    fetch(req)
+    fresh
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
