@@ -159,3 +159,10 @@ export function excerpt(s: string, max = 160): string {
 export function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/** Ordinal com o gênero certo, comum de sair trocado na leitura de imagens: "5º Vara" → "5ª Vara", "2ª Juizado" → "2º Juizado". */
+export function fixOrdinals(s: string): string {
+  return s
+    .replace(/\b(\d{1,3})\s?[º°o]\s+(Vara|Turma|Câmara|Camara|Seção|Secao|Região|Zona|Circunscrição|Subseção|Promotoria|Defensoria|Delegacia)\b/g, "$1ª $2")
+    .replace(/\b(\d{1,3})\s?[ªa]\s+(Juizado|Grupo|Ofício|Oficio|Cartório|Cartorio|Núcleo|Nucleo|Juízo|Juizo|Distrito|Foro)\b/g, "$1º $2");
+}

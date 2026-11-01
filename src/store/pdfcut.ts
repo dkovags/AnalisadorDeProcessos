@@ -3,11 +3,15 @@
 /** O PDF não pôde ser cortado (protegido por senha, corrompido ou diferente do que foi lido). */
 export class PdfCutError extends Error {}
 
+/** Acima disto, refazer o PDF no navegador arrisca faltar memória: os documentos saem da lista, mas o arquivo fica inteiro. */
+export const MAX_CUT_BYTES = 150 * 1024 * 1024;
+
 /**
  * Novo PDF só com as páginas que ficam, na mesma ordem. `map` vem de pageMap: map[página antiga] = página nova,
  * ou 0 se foi cortada.
  */
 export async function cutPdf(data: Uint8Array, map: number[]): Promise<Uint8Array> {
+  if (data.byteLength > MAX_CUT_BYTES) throw new PdfCutError("o PDF é grande demais para ser refeito no navegador");
   const { PDFDocument } = await import("pdf-lib");
   let src: Awaited<ReturnType<typeof PDFDocument.load>>;
   try {

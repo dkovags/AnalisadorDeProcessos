@@ -254,6 +254,8 @@ export interface FileMeta {
   pageCount: number;
   /** Páginas sem texto (digitalizadas como imagem). */
   emptyPages?: number[];
+  /** Páginas cujo texto foi lido das imagens (OCR), que pode ter erros. */
+  ocrPages?: number[];
   /** SHA-256, para avisar quando o mesmo arquivo é enviado de novo. */
   sha?: string;
   createdAt: string;

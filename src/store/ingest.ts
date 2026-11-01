@@ -4,7 +4,7 @@ import { extractBytes, type Extracted, type PdfJs } from "./extract";
 
 let pdfjsPromise: Promise<PdfJs> | null = null;
 
-function loadPdfJs(): Promise<PdfJs> {
+export function loadPdfJs(): Promise<PdfJs> {
   pdfjsPromise ||= Promise.all([import("pdfjs-dist"), import("pdfjs-dist/build/pdf.worker.min.mjs?url")])
     .then(([pdfjs, worker]) => {
       // o módulo não veio (a página está sendo recarregada para pegar a versão nova)

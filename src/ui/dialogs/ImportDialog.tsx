@@ -1,4 +1,4 @@
-import { CalendarClock, FileStack, Files, Scissors, TriangleAlert } from "lucide-react";
+import { CalendarClock, FileStack, Files, ScanText, Scissors, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { APP_NAME } from "../../config";
 import { analyze, classifyText } from "../../domain/analysis";
@@ -13,7 +13,8 @@ import type { DocType, FileMeta } from "../../domain/types";
 import * as A from "../../store/actions";
 import { kindOf, paginate, type Extracted } from "../../store/extract";
 import { newId } from "../../store/ids";
-import { persistStorage, readFileText, sha256 } from "../../store/ingest";
+import { loadPdfJs, persistStorage, readFileText, sha256 } from "../../store/ingest";
+import { ocrMinutes, ocrPdfPages } from "../../store/ocr";
 import { cutPdf, PdfCutError } from "../../store/pdfcut";
 import { run } from "../../store/store";
 import { Field, fileSize, Modal } from "../components/basics";
@@ -37,6 +38,8 @@ interface ReadFile {
   type: DocType;
   date: string;
   caseId: string;
+  /** Páginas cujo texto veio da leitura das imagens (OCR). */
+  ocrPages?: number[];
 }
 
 const MODES: { id: Mode; title: string; text: string; icon: ReactNode }[] = [
@@ -44,6 +47,15 @@ const MODES: { id: Mode; title: string; text: string; icon: ReactNode }[] = [
   { id: "documento", title: "Documentos", text: "Petições, decisões, provas, contratos (PDF, Word, texto). Cada arquivo vira um documento da base.", icon: <Files size={22} /> },
   { id: "expediente", title: "Expediente", text: "Intimação, citação ou publicação do DJEN. Guarda o texto e abre o registro do prazo.", icon: <CalendarClock size={22} /> },
 ];
+
+/** Tempo que falta na leitura das imagens, pelo ritmo das páginas já lidas. */
+function ocrLeft(o: { done: number; total: number; started: number }): string {
+  if (!o.done) return "preparando a leitura…";
+  const seconds = ((Date.now() - o.started) / 1000 / o.done) * (o.total - o.done);
+  if (seconds < 60) return "menos de 1 minuto para terminar";
+  const min = Math.round(seconds / 60);
+  return `cerca de ${min} ${min === 1 ? "minuto" : "minutos"} para terminar`;
+}
 
 /** Data do documento: a da assinatura eletrônica ou a última data do texto (sem datas futuras). */
 function guessDate(pages: string[], today: string): string {
@@ -85,6 +97,10 @@ export function ImportDialog({
   const [info, setInfo] = useState<CaseFileInfo | null>(null);
   const [target, setTarget] = useState<string>(caseId || "");
   const [numberFromName, setNumberFromName] = useState(false);
+  // leitura do texto das imagens (OCR): o andamento e o botão de interromper
+  const [ocr, setOcr] = useState<{ done: number; total: number; started: number } | null>(null);
+  const ocrCtrl = useRef<AbortController | null>(null);
+  useEffect(() => () => ocrCtrl.current?.abort(), []);
   const [clientIdx, setClientIdx] = useState(0);
   // documentos de representação: ficam de fora da base e, se a pessoa quiser, saem do PDF guardado
   const [cutRep, setCutRep] = useState(true);
@@ -172,6 +188,65 @@ export function ImportDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Lê o texto das páginas que são imagem (todas, ou só as primeiras, para conferir a capa depressa). */
+  const runOcr = async (scope: "todas" | "inicio") => {
+    const idx = items.findIndex((it) => it.file && it.text.kind === "pdf" && it.text.empty.length);
+    if (idx < 0) return;
+    const it = items[idx];
+    const targets = scope === "inicio" ? it.text.empty.slice(0, 4) : it.text.empty;
+    const ctrl = new AbortController();
+    ocrCtrl.current = ctrl;
+    setOcr({ done: 0, total: targets.length, started: Date.now() });
+    try {
+      const data = new Uint8Array(await it.file!.arrayBuffer());
+      const found = await ocrPdfPages(data, targets, loadPdfJs, { signal: ctrl.signal, onPage: (_p, _t, done) => setOcr((o) => (o ? { ...o, done } : o)) });
+      if (!found.size) return;
+      const pages = it.text.pages.map((t, i) => found.get(i + 1) ?? t);
+      const empty = it.text.empty.filter((p) => (found.get(p) ?? "").replace(/\s/g, "").length < 15);
+      const ocrPages = [...new Set([...(it.ocrPages || []), ...found.keys()])].sort((a, b) => a - b);
+      setItems((list) => list.map((x, i) => (i === idx ? { ...x, text: { ...x.text, pages, empty }, ocrPages } : x)));
+      if (mode === "processo" && idx === 0) {
+        // com o texto, a capa, as partes e os carimbos das páginas podem ser lidos
+        const parsed = parseCaseFile(pages, { outline: it.text.outline, layout: it.text.layout });
+        const fromName = parsed.number ? undefined : cnjInFileName(it.name);
+        if (fromName) parsed.number = fromName;
+        setNumberFromName(!!fromName);
+        setInfo(parsed);
+        setKeep({});
+        setClientIdx(0);
+        if (!caseId && !target && parsed.number) setTarget(A.findCaseByNumber(ds, parsed.number)?.id || "");
+      }
+      ui.toast(
+        ctrl.signal.aborted
+          ? `Leitura interrompida: texto lido em ${found.size} de ${targets.length} páginas.`
+          : `Texto lido em ${found.size === 1 ? "1 página" : `${found.size} páginas`}. Confira os dados: a leitura de imagens pode ter erros.`,
+      );
+    } catch (e) {
+      console.error(e);
+      if (isStaleChunk(e) && (isReloading() || reloadForUpdate())) return;
+      ui.toast(`Não foi possível ler o texto das imagens: ${(e as Error).message || e}`, { kind: "error" });
+    } finally {
+      ocrCtrl.current = null;
+      setOcr(null);
+    }
+  };
+
+  /** Fechar no meio da leitura perde o que foi lido: pergunta antes. */
+  const close = () => {
+    if (!ocr) return onClose();
+    ui.open({
+      type: "confirm",
+      title: "Interromper a leitura?",
+      message: "O texto das imagens lido até agora se perde se você fechar a janela.",
+      confirmLabel: "Fechar mesmo assim",
+      danger: true,
+      onConfirm: () => {
+        ocrCtrl.current?.abort();
+        onClose();
+      },
+    });
+  };
+
   const saveFileOf = async (it: ReadFile): Promise<FileMeta> => {
     const meta: FileMeta = {
       id: newId("f"),
@@ -180,6 +255,7 @@ export function ImportDialog({
       size: it.size,
       pageCount: it.text.pages.length,
       emptyPages: it.text.empty.length ? it.text.empty : undefined,
+      ocrPages: it.ocrPages?.length ? it.ocrPages : undefined,
       sha: it.sha,
       createdAt: new Date().toISOString(),
     };
@@ -208,7 +284,8 @@ export function ImportDialog({
               const pages = it.text.pages.filter((_, i) => map[i + 1]);
               const empty = it.text.empty.filter((p) => map[p]).map((p) => map[p]);
               const layout = it.text.layout?.filter((_, i) => map[i + 1]);
-              it = { ...it, file: new File([bytes as BlobPart], it.name, { type: "application/pdf" }), size: bytes.byteLength, text: { ...it.text, pages, empty, layout } };
+              const ocrPages = it.ocrPages?.filter((p) => map[p]).map((p) => map[p]);
+              it = { ...it, file: new File([bytes as BlobPart], it.name, { type: "application/pdf" }), size: bytes.byteLength, text: { ...it.text, pages, empty, layout }, ocrPages };
               docs = docs.flatMap((d) => {
                 const pages = remapRange(d.pages, map);
                 return pages ? [{ ...d, pages }] : [];
@@ -299,19 +376,20 @@ export function ImportDialog({
   const setItem = (key: string, patch: Partial<ReadFile>) => setItems((list) => list.map((x) => (x.key === key ? { ...x, ...patch } : x)));
   const scanned = items.reduce((n, it) => n + it.text.empty.length, 0);
   const pagesTotal = items.reduce((n, it) => n + it.text.pages.length, 0);
+  const canOcr = items.some((it) => it.file && it.text.kind === "pdf" && it.text.empty.length);
 
   return (
     <Modal
       title={step === "review" && mode === "processo" ? "Conferir o processo" : "Enviar para a base de conhecimento"}
-      onClose={onClose}
+      onClose={close}
       wide
       footer={
         step === "review" ? (
           <>
-            <button className="btn btn-ghost" onClick={() => setStep("choose")}>
+            <button className="btn btn-ghost" onClick={() => setStep("choose")} disabled={!!ocr}>
               Voltar
             </button>
-            <button className="btn btn-primary" onClick={save}>
+            <button className="btn btn-primary" onClick={save} disabled={!!ocr}>
               {mode === "processo" ? (target ? "Atualizar o processo" : "Criar o processo") : mode === "expediente" ? "Guardar e registrar o prazo" : "Guardar"}
             </button>
           </>
@@ -411,26 +489,54 @@ export function ImportDialog({
               <span>Este arquivo já foi enviado antes ({items.find((it) => it.duplicateOf)?.duplicateOf}). Se continuar, ele fica duplicado na base.</span>
             </div>
           )}
-          {scanned > 0 && scanned === pagesTotal ? (
-            <div className="banner danger small">
-              <TriangleAlert size={18} />
-              <span>
-                Nenhuma {pagesTotal === 1 ? "página" : `das ${pagesTotal} páginas`} tem texto: o PDF foi gerado como imagem (impressão para PDF, digitalização ou cópia
-                da tela). Sem texto, o {APP_NAME} não consegue ler o número, as partes nem separar os documentos, e a pesquisa não alcança o arquivo. Baixe o
-                processo pela opção de download do próprio sistema do tribunal, que costuma gerar o PDF com texto, e envie de novo.
-              </span>
-            </div>
-          ) : (
-            scanned > 0 && (
-              <div className="banner warn small">
-                <TriangleAlert size={18} />
-                <span>
-                  {scanned} de {pagesTotal} páginas não têm texto (imagem digitalizada): elas ficam guardadas, mas a pesquisa não as alcança. Se puder, baixe a versão
-                  com texto (OCR) no sistema do tribunal.
-                </span>
+          {scanned > 0 &&
+            (ocr ? (
+              <div className="banner info small ocr-box" role="status">
+                <ScanText size={18} />
+                <div>
+                  <strong>
+                    Lendo o texto das imagens: página {ocr.done} de {ocr.total}
+                  </strong>
+                  {" · "}
+                  {ocrLeft(ocr)}
+                  <div className="progress">
+                    <span style={{ width: `${(ocr.done / Math.max(1, ocr.total)) * 100}%` }} />
+                  </div>
+                  <p className="muted small">
+                    Deixe esta janela aberta (dá para usar outros programas enquanto isso). No celular, a leitura é bem mais lenta.
+                  </p>
+                  <button className="btn btn-ghost btn-sm" onClick={() => ocrCtrl.current?.abort()}>
+                    Interromper
+                  </button>
+                </div>
               </div>
-            )
-          )}
+            ) : (
+              <div className={`banner small ${scanned === pagesTotal ? "danger" : "warn"}`}>
+                <TriangleAlert size={18} />
+                <div>
+                  <p>
+                    {scanned === pagesTotal
+                      ? `Nenhuma ${pagesTotal === 1 ? "página" : `das ${pagesTotal} páginas`} tem texto: o PDF foi gerado como imagem (impressão para PDF, digitalização ou cópia da tela). Sem texto, o ${APP_NAME} não lê o número, as partes nem separa os documentos, e a pesquisa não alcança o arquivo.`
+                      : `${scanned} de ${pagesTotal} páginas não têm texto (imagem digitalizada): a pesquisa não as alcança.`}{" "}
+                    {canOcr
+                      ? "Dá para ler o texto das imagens (OCR) aqui mesmo, no seu aparelho; a leitura pode ter erros, então confira o resultado."
+                      : "Se puder, baixe o arquivo com texto no sistema do tribunal."}
+                  </p>
+                  {canOcr && (
+                    <div className="banner-actions">
+                      <button className="btn btn-primary btn-sm" onClick={() => runOcr("todas")}>
+                        <ScanText size={15} /> Ler o texto {scanned === 1 ? "da página" : `das ${scanned} páginas`} (cerca de {ocrMinutes(scanned)} min)
+                      </button>
+                      {scanned > 6 && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => runOcr("inicio")}>
+                          Só as 4 primeiras (para conferir a capa)
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           {mode === "processo" && info ? (
             <div className="review">
               <dl className="infos">

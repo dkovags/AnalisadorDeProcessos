@@ -5,7 +5,7 @@ import { pageMap, pagesToCut, remapRange, representationOf } from "../src/domain
 import type { DocType, FileMeta } from "../src/domain/types";
 import * as A from "../src/store/actions";
 import { extractPdf } from "../src/store/extract";
-import { cutPdf, PdfCutError } from "../src/store/pdfcut";
+import { cutPdf, MAX_CUT_BYTES, PdfCutError } from "../src/store/pdfcut";
 import { MemoryPersistence } from "../src/store/persistence";
 import { AppStore } from "../src/store/store";
 
@@ -75,6 +75,10 @@ describe("corte do PDF", () => {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const out = await extractPdf(cut, pdfjs as never);
     expect(out.pages.map((p) => p.trim())).toEqual(["Pagina numero 1", "Pagina numero 3", "Pagina numero 5"]);
+  });
+
+  it("não tenta refazer no navegador um PDF grande demais", async () => {
+    await expect(cutPdf(new Uint8Array(MAX_CUT_BYTES + 1), pageMap(2, new Set([1])))).rejects.toThrow(/grande demais/);
   });
 
   it("recusa quando o PDF não é o que foi lido", async () => {

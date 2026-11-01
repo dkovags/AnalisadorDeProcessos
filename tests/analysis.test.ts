@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { analyze, classifyText, explicitTerms, requestedDocs } from "../src/domain/analysis";
 import { courtRef, eprocDoc, eventText, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
 import { cnjCheckDigits, cnjInFileName, formatCnj } from "../src/domain/cnj";
-import { fold } from "../src/domain/text";
+import { fixOrdinals, fold } from "../src/domain/text";
 
 const DJEN = `Processo: 0801234-56.2023.8.20.5001
 Órgão: 3ª Vara Cível da Comarca de Natal
@@ -82,6 +82,12 @@ Emende a parte autora a petição inicial, no prazo de 15 dias, sob pena de inde
     expect(a.suggestions[0]).toMatchObject({ rule: "pagamento_cumprimento", days: 15 });
     expect(a.suggestions.map((s) => s.rule)).not.toContain("sentenca");
     expect(a.status?.status).toBe("execucao");
+  });
+
+  it("acerta o gênero do ordinal trocado na leitura de imagens", () => {
+    expect(fixOrdinals("5º Vara Cível da Comarca de Mossoró")).toBe("5ª Vara Cível da Comarca de Mossoró");
+    expect(fixOrdinals("2ª Juizado Especial Cível")).toBe("2º Juizado Especial Cível");
+    expect(fixOrdinals("1ª Turma Recursal")).toBe("1ª Turma Recursal");
   });
 
   it("acha o número do processo no nome do arquivo baixado", () => {

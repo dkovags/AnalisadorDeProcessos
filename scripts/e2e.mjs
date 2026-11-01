@@ -41,14 +41,22 @@ function cnj(seq, year, j, tr, origin) {
 }
 
 /** Gera um PDF com uma página para cada trecho de HTML (com os títulos como marcadores, se pedido). */
-async function renderPdf(path, pages, { outline = false } = {}) {
-  const page = await browser.newPage();
+async function renderPdf(path, pages, { outline = false, scanned = false } = {}) {
+  const page = await browser.newPage({ viewport: { width: 794, height: 1123 }, deviceScaleFactor: scanned ? 2 : 1 });
   await page.setContent(`<html><head><style>
     body { font-family: Arial, sans-serif; font-size: 12px; margin: 0 }
     .p { height: 1040px; position: relative; padding: 30px; box-sizing: border-box; page-break-after: always }
     .stamp { position: absolute; bottom: 20px; left: 30px; font-size: 9px }
     table { border-collapse: collapse } td, th { padding: 2px 12px 2px 0; text-align: left; vertical-align: top }
   </style></head><body>${pages.map((p) => `<div class="p">${p}</div>`).join("")}</body></html>`);
+  if (scanned) {
+    // "digitalizado": cada página vira uma imagem, sem camada de texto (como um processo impresso para PDF)
+    const shots = [];
+    for (let i = 0; i < pages.length; i++) shots.push((await page.locator(".p").nth(i).screenshot({ type: "jpeg", quality: 85 })).toString("base64"));
+    await page.setContent(
+      `<html><body style="margin:0">${shots.map((b) => `<img src="data:image/jpeg;base64,${b}" style="display:block;width:794px;height:1040px;page-break-after:always">`).join("")}</body></html>`,
+    );
+  }
   await page.pdf({ path, format: "A4", margin: { top: 0, bottom: 0, left: 0, right: 0 }, outline, tagged: outline });
   await page.close();
 }
@@ -70,7 +78,7 @@ async function makeImagePdf(path, pages = 2) {
 }
 
 /** PDF no formato do "processo integral" do PJe: capa com partes e índice, e o carimbo "Num. Id - Pág. n" em cada página. */
-async function makeCaseFilePdf(path, number) {
+async function makeCaseFilePdf(path, number, { scanned = false } = {}) {
   const stamp = (id, pag) => `<div class="stamp">Assinado eletronicamente por: JUIZ TESTE - 02/10/2026 16:12:00<br>Num. ${id} - Pág. ${pag}</div>`;
   const pages = [
     `<p><b>Número:</b> ${number}</p><p><b>Classe:</b> PROCEDIMENTO COMUM CÍVEL</p><p><b>Órgão julgador:</b> 5ª Vara Cível da Comarca de Mossoró</p>
@@ -95,7 +103,7 @@ async function makeCaseFilePdf(path, number) {
     `<h3>CARTA DE PREPOSIÇÃO</h3><p>TELEFONIA GAMA S.A. credencia o preposto indicado para representá-la em audiência.</p>${stamp("40000006", 1)}`,
     `<h3>DESPACHO</h3><p>Intime-se a parte autora para, no prazo de 15 (quinze) dias, apresentar réplica à contestação, devendo juntar o extrato atualizado do SPC e comprovante de residência atualizado.</p><p>Após, conclusos.</p>${stamp("40000004", 1)}`,
   ];
-  await renderPdf(path, pages);
+  await renderPdf(path, pages, { scanned });
 }
 
 /** PDF no formato do processo completo do eproc: capa com "Partes e Representantes" e eventos, e o carimbo do evento em cada página. */
@@ -395,6 +403,26 @@ try {
   await page.getByText("(lido do nome do arquivo)").waitFor();
   expect(await page.getByText(imgNumber).count(), "número do nome do arquivo não apareceu");
   await shot(page, "07c-pdf-sem-texto");
+  await page.keyboard.press("Escape");
+  await closed(page);
+
+  // processo do PJe digitalizado (só imagens): a leitura das imagens (OCR) acha o número, as partes e os documentos
+  const scannedNumber = cnj("0806666", "2026", "8", "20", "5106");
+  const scannedPath = `${OUT}/processo-digitalizado.pdf`;
+  await makeCaseFilePdf(scannedPath, scannedNumber, { scanned: true });
+  await page.goto(URL + "#/processos");
+  await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
+  await page.locator(".modal input[type=file]").setInputFiles(scannedPath);
+  await page.getByText(/Nenhuma das 8 páginas tem texto/).waitFor();
+  await page.getByRole("button", { name: /Ler o texto das 8 páginas/ }).click();
+  await page.getByText(/Lendo o texto das imagens/).waitFor();
+  await shot(page, "07d-lendo-imagens");
+  await page.getByText(/Texto lido em 8 páginas/).waitFor({ timeout: 180000 });
+  expect((await page.getByText(scannedNumber).count()) > 0, "o número do processo não foi lido da imagem da capa");
+  await page.locator(".doc-preview-row", { hasText: "Contestação Gama" }).waitFor();
+  expect((await page.locator(".doc-preview-row").count()) === 7, `esperava 7 documentos lidos das imagens, veio ${await page.locator(".doc-preview-row").count()}`);
+  await page.getByText("Ana Cliente").first().waitFor();
+  await shot(page, "07e-processo-lido-das-imagens");
   await page.keyboard.press("Escape");
   await closed(page);
 

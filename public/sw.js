@@ -24,7 +24,8 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
   // aviso de versão nova: sempre do site
   if (url.pathname.endsWith("/version.json")) return;
-  const immutable = url.pathname.includes("/assets/");
+  // arquivos com hash no nome e os da leitura de imagens (a pasta muda de nome quando eles mudam)
+  const immutable = url.pathname.includes("/assets/") || url.pathname.includes("/ocr/");
   if (immutable) {
     event.respondWith(
       caches.match(req).then(

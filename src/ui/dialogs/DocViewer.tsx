@@ -40,6 +40,8 @@ export function DocViewer({ docId, q: initialQ, page, onClose }: { docId: string
   const text = shown.map((p) => p.text).join("\n\n");
   const hits = m.empty ? 0 : shown.reduce((n, p) => n + highlight(p.text, m).filter((s) => s.hit).length, 0);
   const pdf = file?.mime === "application/pdf";
+  // páginas deste documento cujo texto veio da leitura das imagens (OCR)
+  const ocrRead = !!file?.ocrPages?.some((p) => (d.pages ? p >= d.pages[0] && p <= d.pages[1] : true));
 
   const open = async () => {
     const blob = await store.blob(d.fileId);
@@ -60,6 +62,11 @@ export function DocViewer({ docId, q: initialQ, page, onClose }: { docId: string
           {courtRef(d.courtId) && <span>{courtRef(d.courtId)}</span>}
           {d.signer && <span>{d.signer}</span>}
           {d.pages && <span>páginas {d.pages[0]} a {d.pages[1]} do arquivo</span>}
+          {ocrRead && (
+            <span className="chip tone-warn" title="Texto reconhecido nas imagens das páginas: confira no PDF original">
+              texto lido da imagem: pode ter erros
+            </span>
+          )}
         </div>
         <div className="viewer-actions">
           {file && (

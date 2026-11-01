@@ -185,10 +185,13 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
   tribunais. A capa pode variar entre os tribunais que usam o eproc; se algo não for reconhecido, o processo inteiro
   fica guardado como um documento só, pesquisável do mesmo jeito, e as partes podem ser completadas à mão. Quando o
   eproc divide o *download* em partes ("Parte 1", "Parte 2"...), importe cada parte no mesmo processo.
-- Páginas digitalizadas sem texto (imagem) ficam guardadas, mas não entram na pesquisa: o Analisador de Processos avisa quando isso
-  acontece. Prefira baixar o processo com texto (OCR) no sistema do tribunal. Se o PDF inteiro for imagem (impresso para
-  PDF ou digitalizado), não há como ler a capa nem separar os documentos; o número do processo, se estiver no nome do
-  arquivo, é aproveitado.
+- Páginas sem texto (imagem digitalizada, processo impresso para PDF): o Analisador de Processos avisa e oferece a
+  leitura do texto das imagens (OCR), feita no próprio aparelho, sem mandar o arquivo para a internet. Com o texto, ele
+  lê a capa, as partes e os carimbos das páginas, separa os documentos e a pesquisa passa a alcançá-los. A leitura leva
+  cerca de 1,5 segundo por página num computador de 4 núcleos (um processo de 700 páginas, perto de 20 minutos; no
+  celular, bem mais), dá para ler só as primeiras páginas para conferir a capa e pode ter erros: confira o número, as
+  partes e os documentos encontrados. O documento lido assim mostra o aviso "texto lido da imagem". O número do
+  processo, se estiver no nome do arquivo, também é aproveitado.
 - Atualizações: quando sai uma versão nova, uma faixa no alto da tela avisa e oferece **Atualizar agora**. Se uma aba
   aberta antes da atualização precisar de uma parte que mudou (como o leitor de PDF), o aplicativo recarrega sozinho e
   pede para enviar o arquivo de novo.
@@ -223,6 +226,8 @@ src/store/                 ações, IndexedDB, leitura de arquivos (pdf.js, Word
 src/store/cnjapi.ts        consultas ao DJEN e ao DataJud pelo intermediário
 src/domain/representation.ts  documentos de representação e a renumeração das páginas no corte
 src/store/pdfcut.ts        corte de páginas do PDF guardado (pdf-lib, carregado só quando precisa)
+src/store/ocr.ts           leitura do texto das páginas que são imagem (tesseract.js, com o modelo do português)
+scripts/copy-ocr.mjs       copia os arquivos do OCR para public/ocr (ficam no próprio site, sem CDN)
 src/ui/                    telas (React); ui/cnjsync.ts faz a busca diária no DJEN
 servidor/                  intermediário no Brasil (AWS Lambda) e o passo a passo para criá-lo
 public/                    ícones, manifesto e service worker (funciona sem internet)

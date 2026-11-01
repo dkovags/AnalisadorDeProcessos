@@ -3,7 +3,7 @@ import { CNJ_RE, formatCnj, parseCnj } from "./cnj";
 import { validDate } from "./dates";
 import { DOC_TYPES } from "./labels";
 import type { DocType, PersonKind, Pole } from "./types";
-import { findDates, fold, isUpper, parseMoney, squash, titleCase } from "./text";
+import { findDates, fixOrdinals, fold, isUpper, parseMoney, squash, titleCase } from "./text";
 
 // Leitura do PDF do processo inteiro baixado do sistema do tribunal ("processo integral").
 // PJe: capa com os dados do processo, partes e índice de documentos; cada página tem o carimbo "Num. <Id> - Pág. <n>".
@@ -146,7 +146,8 @@ function field(lines: string[], label: RegExp): string | undefined {
   return undefined;
 }
 
-const PJE_STAMP = /Num\.\s*(\d{4,14})\s*-\s*P[áa]g\.\s*(\d+)/;
+// tolera as trocas comuns da leitura de imagens (OCR): "Num," por "Num.", travessão por hífen, "Pag" sem acento
+const PJE_STAMP = /Num[.,]?\s*(\d{4,14})\s*[-–—]\s*P[áa]g[.,]?\s*(\d+)/;
 const PJE_SIGNED = /Assinado eletronicamente por:\s*(.+?)\s*-\s*(\d{2}\/\d{2}\/\d{4})/;
 // o código do e-SAJ tem algum algarismo (não confundir com o "código verificador" do eproc)
 const ESAJ_CODE = /c[óo]digo\s+(?=[0-9A-Za-z]*\d)([0-9A-Za-z]{6,})/;
@@ -184,7 +185,7 @@ function parseCover(cover: string[], info: CaseFileInfo) {
   const cls = field(cover, /^\s*classe(?:\s+(?:da acao|processual|judicial))?\s*:/);
   if (cls) info.className = isUpper(cls) ? titleCase(cls) : cls;
   const body = field(cover, /^\s*(?:orgao julgador(?:\s+colegiado)?|juizo|vara)\s*:/);
-  if (body) info.body = isUpper(body) ? titleCase(body) : body;
+  if (body) info.body = fixOrdinals(isUpper(body) ? titleCase(body) : body);
   const dist = field(cover, /^\s*(?:ultima distribuicao|data da distribuicao|distribuicao|data de autuacao|data da autuacao|autuacao|autuado em)\s*:/);
   if (dist) info.filedAt = findDates(dist)[0]?.iso;
   // no eproc, o valor e o sigilo vêm no meio da linha ("Chave Processo: ... Valor da Causa: R$ ...")
