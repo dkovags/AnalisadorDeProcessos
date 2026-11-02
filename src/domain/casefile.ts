@@ -1,5 +1,5 @@
 import { classifyText, docTypeFromLabel } from "./analysis";
-import { CNJ_RE, formatCnj, parseCnj } from "./cnj";
+import { CNJ_RE, formatCnj, isValidCnj, parseCnj } from "./cnj";
 import { validDate } from "./dates";
 import { DOC_TYPES } from "./labels";
 import type { DocType, PersonKind, Pole } from "./types";
@@ -79,6 +79,8 @@ export interface CaseFileInfo {
   events?: FileEvent[];
   /** Parte do arquivo, quando o sistema divide o processo em vários PDFs ("Capa: Parte 2"). */
   part?: number;
+  /** O número não veio da capa, mas do texto das páginas (o que mais aparece): convém conferir. */
+  numberGuessed?: boolean;
 }
 
 const LAWYER_ROLES = /^(advogad[oa]|procurador[a]?|defensor[a]?( publico| publica)?|representante|curador[a]?|perit[oa])/;
@@ -146,8 +148,10 @@ function field(lines: string[], label: RegExp): string | undefined {
   return undefined;
 }
 
-// tolera as trocas comuns da leitura de imagens (OCR): "Num," por "Num.", travessão por hífen, "Pag" sem acento
-const PJE_STAMP = /Num[.,]?\s*(\d{4,14})\s*[-–—]\s*P[áa]g[.,]?\s*(\d+)/;
+// "Num. 12345678 - Pág. 1" (PJe dos tribunais de justiça e federais) ou "ID. a1b2c3d - Pág. 1" (PJe da Justiça do
+// Trabalho, com um código de 7 letras e algarismos). Tolera as trocas comuns da leitura de imagens (OCR): "Num," por
+// "Num.", "lD" por "ID", travessão por hífen, "Pag" sem acento.
+const PJE_STAMP = /(?:Num|[I1l]D)[.,:]?\s*(\d{4,14}|[0-9a-z]{7})\s*[-–—]\s*P[áa]g[.,:]?\s*(\d+)/i;
 const PJE_SIGNED = /Assinado eletronicamente por:\s*(.+?)\s*-\s*(\d{2}\/\d{2}\/\d{4})/;
 // o código do e-SAJ tem algum algarismo (não confundir com o "código verificador" do eproc)
 const ESAJ_CODE = /c[óo]digo\s+(?=[0-9A-Za-z]*\d)([0-9A-Za-z]{6,})/;
@@ -250,14 +254,26 @@ function parsePjeIndex(pages: string[]): Map<string, IndexEntry> {
   for (const p of pages) {
     if (PJE_STAMP.test(p) && out.size) break;
     for (const line of p.split("\n")) {
-      const m = line.trim().match(/^(\d{5,14})\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\s+(.+)$/);
+      // o código da Justiça do Trabalho tem 7 letras e algarismos, com pelo menos um algarismo
+      const m = line.trim().match(/^(\d{5,14}|(?=[a-z]*\d)[0-9a-z]{7})\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\s+(.+)$/i);
       if (!m) continue;
       const date = findDates(m[2])[0]?.iso;
       if (!date) continue;
-      out.set(m[1], { id: m[1], date, ...splitNameType(m[3]) });
+      const id = m[1].toLowerCase();
+      out.set(id, { id, date, ...splitNameType(m[3]) });
     }
   }
   return out;
+}
+
+/** Os dois códigos diferem em no máximo um caractere (trocado, a mais ou a menos): erro comum da leitura de imagens. */
+function nearlySame(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  const rest = (x: string, from: number) => x.slice(from);
+  return rest(a, i + 1) === rest(b, i + 1) || rest(a, i) === rest(b, i + 1) || rest(a, i + 1) === rest(b, i);
 }
 
 function parsePje(pages: string[], info: CaseFileInfo) {
@@ -266,6 +282,7 @@ function parsePje(pages: string[], info: CaseFileInfo) {
   const index = parsePjeIndex(pages);
   let current: FileDoc | null = null;
   let currentId = "";
+  let lastPag = 0;
   let coverEnd = 0;
   pages.forEach((text, i) => {
     const page = i + 1;
@@ -275,14 +292,19 @@ function parsePje(pages: string[], info: CaseFileInfo) {
       else coverEnd = page;
       return;
     }
-    if (m[1] !== currentId || !current) {
-      currentId = m[1];
-      const entry = index.get(m[1]);
+    const id = m[1].toLowerCase();
+    const pag = Number(m[2]);
+    // página seguinte do mesmo documento, com o código lido com um erro: não é documento novo
+    const misread = !!current && id !== currentId && pag === lastPag + 1 && pag > 1 && nearlySame(id, currentId);
+    lastPag = pag;
+    if ((id !== currentId && !misread) || !current) {
+      currentId = id;
+      const entry = index.get(id);
       const signed = text.match(PJE_SIGNED);
       const typeFromIndex = entry?.typeLabel ? docTypeFromLabel(entry.typeLabel) : undefined;
       const type = typeFromIndex && typeFromIndex !== "peticao" ? typeFromIndex : classifyText(text) !== "outro" ? classifyText(text) : typeFromIndex || "outro";
       current = {
-        courtId: m[1],
+        courtId: id,
         title: entry?.title || DOC_TYPES[type],
         label: entry?.typeLabel,
         type,
@@ -913,6 +935,27 @@ export function courtRef(courtId?: string): string | undefined {
   return `Id. ${courtId}`;
 }
 
+function mostFrequentCnj(text: string, validOnly = false): string | undefined {
+  const count = new Map<string, number>();
+  for (const m of text.matchAll(CNJ_RE)) {
+    const c = parseCnj(m[0]);
+    if (!c) continue;
+    const n = formatCnj(c);
+    if (validOnly && !isValidCnj(n)) continue;
+    count.set(n, (count.get(n) || 0) + 1);
+  }
+  return [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+/**
+ * Primeira página com o carimbo de um sistema de tribunal (PJe, eproc ou e-SAJ), contando de 1; 0 se nenhuma tiver.
+ * As páginas antes dela são a capa e o índice do processo.
+ */
+export function firstStampedPage(pages: string[]): number {
+  const i = pages.findIndex((p) => PJE_STAMP.test(p) || EPROC_PAGE_STAMP.test(p) || EPROC_STAMP.test(p) || ESAJ_CODE.test(p));
+  return i + 1;
+}
+
 /**
  * Lê o texto das páginas do processo integral. Os marcadores do PDF ajudam a separar e a dar nome aos documentos, e a
  * posição dos textos da capa (layout) diz o polo de cada parte quando a tabela tem uma coluna por polo.
@@ -941,13 +984,10 @@ export function parseCaseFile(pages: string[], opts: { outline?: OutlineEntry[];
   }
 
   if (!info.number) {
-    // número mais frequente nas primeiras páginas
-    const count = new Map<string, number>();
-    for (const m of sample.matchAll(CNJ_RE)) {
-      const c = parseCnj(m[0]);
-      if (c) count.set(formatCnj(c), (count.get(formatCnj(c)) || 0) + 1);
-    }
-    info.number = [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    // número mais frequente nas primeiras páginas; sem nenhum ali (capa digitalizada), o número válido que mais
+    // aparece no resto do processo (cabeçalhos de decisões, certidões e intimações)
+    info.number = mostFrequentCnj(sample) || mostFrequentCnj(pages.join("\n"), true);
+    if (info.number) info.numberGuessed = true;
   }
   if (!info.parties.length) info.parties = partiesFromLabels(sample);
   if (!info.docs.length) info.docs.push({ title: "Processo integral", type: "processo", pages: [1, Math.max(1, pages.length)] });

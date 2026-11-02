@@ -428,12 +428,29 @@ try {
   await page.goto(URL + "#/processos");
   await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
   await page.locator(".modal input[type=file]").setInputFiles(imgPath);
-  await page.getByText(/Nenhuma das 2 páginas tem texto/).waitFor();
+  // a primeira página é imagem: a capa é lida sozinha, assim que o arquivo abre
+  await page.getByText(/Lendo a capa do processo/).waitFor();
   await page.getByText("(lido do nome do arquivo)").waitFor();
   expect(await page.getByText(imgNumber).count(), "número do nome do arquivo não apareceu");
   await shot(page, "07c-pdf-sem-texto");
+  await page.getByText(/Capa lida/).waitFor({ timeout: 120000 });
   await page.keyboard.press("Escape");
   await closed(page);
+
+  // PDF de imagens sem o número em lugar nenhum: o número é digitado e o processo é criado
+  const typedNumber = cnj("0804444", "2026", "8", "20", "5106");
+  const noNumberPath = `${OUT}/processo-sem-numero.pdf`;
+  await makeImagePdf(noNumberPath);
+  await page.goto(URL + "#/processos");
+  await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
+  await page.locator(".modal input[type=file]").setInputFiles(noNumberPath);
+  await page.getByText(/Capa lida \(o número do processo não apareceu nela\)/).waitFor({ timeout: 120000 });
+  await page.getByLabel("Número do processo").fill(typedNumber.replace(/\D/g, ""));
+  await page.getByText(/Número válido/).waitFor();
+  await shot(page, "07c2-numero-digitado");
+  await page.getByRole("button", { name: "Criar o processo" }).click();
+  await closed(page);
+  await page.getByText(typedNumber).first().waitFor();
 
   // processo do PJe digitalizado (só imagens): a leitura das imagens (OCR) acha o número, as partes e os documentos
   const scannedNumber = cnj("0806666", "2026", "8", "20", "5106");
@@ -442,15 +459,27 @@ try {
   await page.goto(URL + "#/processos");
   await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
   await page.locator(".modal input[type=file]").setInputFiles(scannedPath);
-  await page.getByText(/Nenhuma das 8 páginas tem texto/).waitFor();
-  await page.getByRole("button", { name: /Ler o texto das 8 páginas/ }).click();
-  await page.getByText(/Lendo o texto das imagens/).waitFor();
-  await shot(page, "07d-lendo-imagens");
-  await page.getByText(/Texto lido em 8 páginas/).waitFor({ timeout: 180000 });
+  let t0 = Date.now();
+  await page.getByText(/Lendo a capa do processo/).waitFor();
+  await shot(page, "07d-lendo-capa");
+  await page.getByText(/Capa lida\./).waitFor({ timeout: 180000 });
+  console.log(`  capa lida (4 páginas inteiras) em ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   expect((await page.getByText(scannedNumber).count()) > 0, "o número do processo não foi lido da imagem da capa");
+  await page.getByText("Ana Cliente").first().waitFor();
+  // os documentos são separados pelo carimbo do pé de cada página, sem ler o texto inteiro
+  await page.getByText(/4 de 8 páginas não têm texto/).waitFor();
+  t0 = Date.now();
+  await page.getByRole("button", { name: /Separar os documentos/ }).click();
+  await page.getByText(/Separando os documentos/).waitFor();
+  await page.getByText(/Carimbo lido em 4 páginas\. 7 documentos separados\./).waitFor({ timeout: 180000 });
+  console.log(`  carimbo lido (4 páginas) em ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   await page.locator(".doc-preview-row", { hasText: "Contestação Gama" }).waitFor();
   expect((await page.locator(".doc-preview-row").count()) === 7, `esperava 7 documentos lidos das imagens, veio ${await page.locator(".doc-preview-row").count()}`);
-  await page.getByText("Ana Cliente").first().waitFor();
+  const scannedOut = await page.locator(".doc-preview-row.out").allInnerTexts();
+  expect(scannedOut.length === 2 && /Substabelecimento/.test(scannedOut.join()) && /Preposição/.test(scannedOut.join()), `representação não marcada no PDF digitalizado: ${JSON.stringify(scannedOut)}`);
+  // o texto inteiro das páginas que faltam continua disponível
+  await page.getByRole("button", { name: /Ler o texto das 4 páginas/ }).waitFor();
+  expect((await page.getByRole("button", { name: /Separar os documentos/ }).count()) === 0, "o botão de separar deveria sumir depois de ler os carimbos");
   await shot(page, "07e-processo-lido-das-imagens");
   await page.keyboard.press("Escape");
   await closed(page);
@@ -557,7 +586,7 @@ try {
   await page.reload();
   await page.goto(URL + "#/processos");
   await page.getByText("Ana Cliente x Telefonia Gama S.A.").waitFor();
-  expect((await page.locator(".case-row").count()) === 5, "processos não ficaram guardados");
+  expect((await page.locator(".case-row").count()) === 6, "processos não ficaram guardados");
   await page.getByText("Ana Cliente x Telefonia Gama S.A.").click();
   await page.getByRole("tab", { name: /Documentos/ }).click();
   await page.getByLabel("Pesquisar nos documentos do processo").fill("negativação");

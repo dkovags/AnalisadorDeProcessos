@@ -13,9 +13,12 @@ export function ocrWorkers(): number {
   return cores >= 8 ? 3 : cores >= 4 ? 2 : 1;
 }
 
-/** Estimativa do tempo de leitura, em minutos (medido: cerca de 2,8 segundos por página em cada núcleo usado). */
-export function ocrMinutes(pages: number, workers = ocrWorkers()): number {
-  return Math.max(1, Math.round((pages * 2.8) / workers / 60));
+/** Segundos por página em cada núcleo usado (medido com páginas de petição digitalizadas a 300 dpi: 3 a 7 s inteiras, 0,5 s só as margens). */
+const SECONDS_PER_PAGE = { full: 4.5, margins: 0.6 };
+
+/** Estimativa do tempo de leitura, em minutos. */
+export function ocrMinutes(pages: number, workers = ocrWorkers(), what: keyof typeof SECONDS_PER_PAGE = "full"): number {
+  return Math.max(1, Math.round((pages * SECONDS_PER_PAGE[what]) / workers / 60));
 }
 
 export interface OcrOptions {
@@ -26,7 +29,16 @@ export interface OcrOptions {
   /** Largura da imagem de cada página, em pixels (1700 dá cerca de 200 dpi numa folha A4). */
   width?: number;
   workers?: number;
+  /**
+   * Só as margens de cima e de baixo de cada página, onde os sistemas dos tribunais põem o carimbo ("Num. 123 -
+   * Pág. 1" no PJe, "Evento 1, INIC1, Página 1" no eproc): bem mais rápido, e basta para separar os documentos.
+   */
+  margins?: boolean;
 }
+
+/** Parte da altura da página lida em cada margem, no modo `margins`. */
+const MARGIN_TOP = 0.09;
+const MARGIN_BOTTOM = 0.15;
 
 interface Viewport {
   width: number;
@@ -35,7 +47,7 @@ interface Viewport {
 
 interface RenderablePage {
   getViewport(o: { scale: number }): Viewport;
-  render(o: { canvas: HTMLCanvasElement; viewport: Viewport; intent?: string }): { promise: Promise<void> };
+  render(o: { canvas: HTMLCanvasElement; viewport: Viewport; intent?: string; transform?: number[] }): { promise: Promise<void> };
   cleanup(): void;
 }
 
@@ -44,27 +56,51 @@ interface RenderableDoc {
   getPage(n: number): Promise<RenderablePage>;
 }
 
-/** Desenha a página num canvas branco e devolve a imagem (JPEG) para o OCR. */
-async function renderPage(doc: RenderableDoc, n: number, width: number): Promise<Blob> {
+function whiteCanvas(width: number, height: number): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(width));
+  canvas.height = Math.max(1, Math.ceil(height));
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (ctx) {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  return canvas;
+}
+
+/** Desenha a faixa da página que começa na altura `top` (em pixels da imagem) e tem `height` de altura. */
+async function drawBand(page: RenderablePage, viewport: Viewport, top: number, height: number): Promise<HTMLCanvasElement> {
+  const canvas = whiteCanvas(viewport.width, height);
+  // "print": desenha sem esperar quadros da tela, então continua mesmo com a aba em segundo plano
+  await page.render({ canvas, viewport, intent: "print", transform: top ? [1, 0, 0, 1, 0, -top] : undefined }).promise;
+  return canvas;
+}
+
+/** Desenha a página (ou só as margens de cima e de baixo, uma sobre a outra) e devolve a imagem (JPEG) para o OCR. */
+async function renderPage(doc: RenderableDoc, n: number, width: number, margins: boolean): Promise<Blob> {
   const page = await doc.getPage(n);
+  const canvases: HTMLCanvasElement[] = [];
   try {
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: Math.min(4, Math.max(1, width / base.width)) });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (ctx) {
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let canvas: HTMLCanvasElement;
+    if (!margins) canvas = await drawBand(page, viewport, 0, viewport.height);
+    else {
+      const top = Math.ceil(viewport.height * MARGIN_TOP);
+      const bottom = Math.ceil(viewport.height * MARGIN_BOTTOM);
+      const gap = 24;
+      canvases.push(await drawBand(page, viewport, 0, top), await drawBand(page, viewport, viewport.height - bottom, bottom));
+      canvas = whiteCanvas(viewport.width, top + gap + bottom);
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(canvases[0], 0, 0);
+      ctx?.drawImage(canvases[1], 0, top + gap);
     }
-    // "print": desenha sem esperar quadros da tela, então continua mesmo com a aba em segundo plano
-    await page.render({ canvas, viewport, intent: "print" }).promise;
+    canvases.push(canvas);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
-    canvas.width = canvas.height = 0;
     if (!blob) throw new Error(`Não foi possível desenhar a página ${n}.`);
     return blob;
   } finally {
+    for (const c of canvases) c.width = c.height = 0;
     page.cleanup();
   }
 }
@@ -105,7 +141,7 @@ export async function ocrPdfPages(data: Uint8Array, pages: number[], loadPdf: ()
     for (const p of pages) {
       if (opts.signal?.aborted) break;
       if (p < 1 || p > doc.numPages) continue;
-      const image = await renderPage(doc, p, opts.width ?? 1700);
+      const image = await renderPage(doc, p, opts.width ?? (opts.margins ? 2000 : 1700), !!opts.margins);
       pending.push(
         scheduler.addJob("recognize", image).then((r) => {
           const text = cleanOcrText(r.data.text || "");

@@ -2,8 +2,8 @@ import { CalendarClock, FileStack, Files, ScanText, Scissors, TriangleAlert } fr
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { APP_NAME } from "../../config";
 import { analyze, classifyText } from "../../domain/analysis";
-import { courtRef, parseCaseFile, type CaseFileInfo } from "../../domain/casefile";
-import { cnjInFileName } from "../../domain/cnj";
+import { courtRef, firstStampedPage, parseCaseFile, type CaseFileInfo } from "../../domain/casefile";
+import { checkCaseNumber, cnjInFileName } from "../../domain/cnj";
 import { formatDate } from "../../domain/dates";
 import { findDates } from "../../domain/text";
 import { DOC_TYPES, POLES } from "../../domain/labels";
@@ -40,6 +40,27 @@ interface ReadFile {
   caseId: string;
   /** Páginas cujo texto veio da leitura das imagens (OCR). */
   ocrPages?: number[];
+  /** Páginas digitalizadas em que só as margens (o carimbo do tribunal) foram lidas. */
+  marginPages?: number[];
+}
+
+/** Leitura do texto das imagens: a capa (as primeiras páginas), só o carimbo de cada página, ou tudo. */
+type OcrScope = "capa" | "margens" | "todas";
+
+const OCR_LABEL: Record<OcrScope, string> = {
+  capa: "Lendo a capa do processo",
+  margens: "Separando os documentos: lendo o carimbo de cada página",
+  todas: "Lendo o texto das imagens",
+};
+
+/** Páginas que cada leitura ainda tem a ler. */
+function ocrTargets(it: ReadFile, scope: OcrScope): number[] {
+  if (scope === "capa") return it.text.empty.filter((p) => p <= 6).slice(0, 4);
+  if (scope === "margens") {
+    const done = new Set(it.marginPages);
+    return it.text.empty.filter((p) => !done.has(p));
+  }
+  return it.text.empty;
 }
 
 const MODES: { id: Mode; title: string; text: string; icon: ReactNode }[] = [
@@ -97,8 +118,13 @@ export function ImportDialog({
   const [info, setInfo] = useState<CaseFileInfo | null>(null);
   const [target, setTarget] = useState<string>(caseId || "");
   const [numberFromName, setNumberFromName] = useState(false);
+  // número digitado, quando não foi achado no arquivo
+  const [typedNumber, setTypedNumber] = useState("");
+  const typedCheck = typedNumber.trim() ? checkCaseNumber(typedNumber) : null;
   // leitura do texto das imagens (OCR): o andamento e o botão de interromper
-  const [ocr, setOcr] = useState<{ done: number; total: number; started: number } | null>(null);
+  const [ocr, setOcr] = useState<{ done: number; total: number; started: number; label: string } | null>(null);
+  // PDF digitalizado: a capa é lida assim que o arquivo abre
+  const [autoCover, setAutoCover] = useState(false);
   const ocrCtrl = useRef<AbortController | null>(null);
   useEffect(() => () => ocrCtrl.current?.abort(), []);
   const [clientIdx, setClientIdx] = useState(0);
@@ -119,6 +145,22 @@ export function ImportDialog({
   };
   const started = useRef(false);
   const cases = Object.values(ds.cases).sort((a, b) => caseLabel(a).localeCompare(caseLabel(b), "pt-BR"));
+
+  /** Lê a capa, as partes e os documentos do texto (o número, se não estiver na capa, pode vir do nome do arquivo). */
+  const parseItem = (it: ReadFile): CaseFileInfo => {
+    const parsed = parseCaseFile(it.text.pages, { outline: it.text.outline, layout: it.text.layout });
+    // sem o número na capa (ex.: PDF só de imagens), o nome do arquivo baixado do tribunal costuma trazê-lo
+    const fromName = parsed.number && !parsed.numberGuessed ? undefined : cnjInFileName(it.name);
+    if (fromName) {
+      parsed.number = fromName;
+      parsed.numberGuessed = false;
+    }
+    setNumberFromName(!!fromName);
+    setInfo(parsed);
+    setKeep({});
+    setClientIdx(0);
+    return parsed;
+  };
 
   const read = async (files: File[], text?: string) => {
     setStep("reading");
@@ -166,16 +208,12 @@ export function ImportDialog({
     }
     setItems(out);
     if (mode === "processo" && out[0]) {
-      const parsed = parseCaseFile(out[0].text.pages, { outline: out[0].text.outline, layout: out[0].text.layout });
-      // sem o número no texto (ex.: PDF só de imagens), o nome do arquivo baixado do tribunal costuma trazê-lo
-      const fromName = parsed.number ? undefined : cnjInFileName(out[0].name);
-      if (fromName) parsed.number = fromName;
-      setNumberFromName(!!fromName);
-      setInfo(parsed);
-      setKeep({});
+      const parsed = parseItem(out[0]);
       const existing = caseId || (parsed.number ? A.findCaseByNumber(ds, parsed.number)?.id : undefined) || "";
       setTarget(existing);
-      setClientIdx(0);
+      setTypedNumber("");
+      // a primeira página é imagem: a capa (número, partes, índice dos documentos) só sai lendo a imagem
+      setAutoCover(!!out[0].file && out[0].text.kind === "pdf" && out[0].text.empty.includes(1));
     }
     setStep("review");
   };
@@ -188,38 +226,69 @@ export function ImportDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Lê o texto das páginas que são imagem (todas, ou só as primeiras, para conferir a capa depressa). */
-  const runOcr = async (scope: "todas" | "inicio") => {
+  /** Uma leitura das imagens: devolve o arquivo com o texto lido juntado ao das páginas. */
+  const ocrPass = async (it: ReadFile, targets: number[], margins: boolean, label: string, signal: AbortSignal): Promise<{ it: ReadFile; read: number }> => {
+    if (!targets.length || signal.aborted) return { it, read: 0 };
+    setOcr({ done: 0, total: targets.length, started: Date.now(), label });
+    const data = new Uint8Array(await it.file!.arrayBuffer());
+    const found = await ocrPdfPages(data, targets, loadPdfJs, { signal, margins, onPage: (_p, _t, done) => setOcr((o) => (o ? { ...o, done } : o)) });
+    if (!found.size) return { it, read: 0 };
+    if (margins) {
+      // só o carimbo: a página continua sem o texto inteiro (e pode ser lida inteira depois)
+      const pages = it.text.pages.map((t, i) => {
+        const f = found.get(i + 1);
+        return f === undefined ? t : t.trim() ? `${t}\n${f}` : f;
+      });
+      const marginPages = [...new Set([...(it.marginPages || []), ...found.keys()])].sort((a, b) => a - b);
+      return { it: { ...it, text: { ...it.text, pages }, marginPages }, read: found.size };
+    }
+    const pages = it.text.pages.map((t, i) => found.get(i + 1) ?? t);
+    const empty = it.text.empty.filter((p) => (found.get(p) ?? "").replace(/\s/g, "").length < 15);
+    const ocrPages = [...new Set([...(it.ocrPages || []), ...found.keys()])].sort((a, b) => a - b);
+    return { it: { ...it, text: { ...it.text, pages, empty }, ocrPages }, read: found.size };
+  };
+
+  /** Lê o texto das páginas que são imagem: a capa, só o carimbo de cada página (para separar os documentos) ou tudo. */
+  const runOcr = async (scope: OcrScope) => {
     const idx = items.findIndex((it) => it.file && it.text.kind === "pdf" && it.text.empty.length);
     if (idx < 0) return;
-    const it = items[idx];
-    const targets = scope === "inicio" ? it.text.empty.slice(0, 4) : it.text.empty;
+    let it = items[idx];
     const ctrl = new AbortController();
     ocrCtrl.current = ctrl;
-    setOcr({ done: 0, total: targets.length, started: Date.now() });
+    let read = 0;
     try {
-      const data = new Uint8Array(await it.file!.arrayBuffer());
-      const found = await ocrPdfPages(data, targets, loadPdfJs, { signal: ctrl.signal, onPage: (_p, _t, done) => setOcr((o) => (o ? { ...o, done } : o)) });
-      if (!found.size) return;
-      const pages = it.text.pages.map((t, i) => found.get(i + 1) ?? t);
-      const empty = it.text.empty.filter((p) => (found.get(p) ?? "").replace(/\s/g, "").length < 15);
-      const ocrPages = [...new Set([...(it.ocrPages || []), ...found.keys()])].sort((a, b) => a - b);
-      setItems((list) => list.map((x, i) => (i === idx ? { ...x, text: { ...x.text, pages, empty }, ocrPages } : x)));
+      const first = await ocrPass(it, ocrTargets(it, scope), scope === "margens", OCR_LABEL[scope], ctrl.signal);
+      it = first.it;
+      read = first.read;
+      let coverRead = 0;
+      if (scope === "margens") {
+        // a capa e o índice (as páginas antes do primeiro carimbo) são lidos inteiros: deles vêm o número, as
+        // partes e o nome de cada documento
+        const stamped = firstStampedPage(it.text.pages);
+        const whole = new Set(it.ocrPages);
+        const cover = it.text.empty.filter((p) => (stamped ? p < stamped : p <= 4) && !whole.has(p)).slice(0, 12);
+        const r = await ocrPass(it, cover, false, OCR_LABEL.capa, ctrl.signal);
+        it = r.it;
+        coverRead = r.read;
+      }
+      if (!read && !coverRead) return;
+      const done = it;
+      setItems((list) => list.map((x, i) => (i === idx ? done : x)));
+      let parsed: CaseFileInfo | undefined;
       if (mode === "processo" && idx === 0) {
         // com o texto, a capa, as partes e os carimbos das páginas podem ser lidos
-        const parsed = parseCaseFile(pages, { outline: it.text.outline, layout: it.text.layout });
-        const fromName = parsed.number ? undefined : cnjInFileName(it.name);
-        if (fromName) parsed.number = fromName;
-        setNumberFromName(!!fromName);
-        setInfo(parsed);
-        setKeep({});
-        setClientIdx(0);
+        parsed = parseItem(done);
         if (!caseId && !target && parsed.number) setTarget(A.findCaseByNumber(ds, parsed.number)?.id || "");
       }
+      const docs = parsed && parsed.docs.length > 1 ? ` ${parsed.docs.length} documentos separados.` : "";
       ui.toast(
         ctrl.signal.aborted
-          ? `Leitura interrompida: texto lido em ${found.size} de ${targets.length} páginas.`
-          : `Texto lido em ${found.size === 1 ? "1 página" : `${found.size} páginas`}. Confira os dados: a leitura de imagens pode ter erros.`,
+          ? `Leitura interrompida: ${read} de ${ocrTargets(items[idx], scope).length} páginas lidas.${docs}`
+          : scope === "capa"
+            ? `Capa lida${parsed?.number ? "" : " (o número do processo não apareceu nela)"}. Confira os dados: a leitura de imagens pode ter erros.`
+            : scope === "margens"
+              ? `Carimbo lido em ${read === 1 ? "1 página" : `${read} páginas`}.${docs || " Nenhum carimbo de tribunal apareceu: os documentos continuam juntos."}`
+              : `Texto lido em ${read === 1 ? "1 página" : `${read} páginas`}. Confira os dados: a leitura de imagens pode ter erros.`,
       );
     } catch (e) {
       console.error(e);
@@ -230,6 +299,13 @@ export function ImportDialog({
       setOcr(null);
     }
   };
+
+  useEffect(() => {
+    if (step !== "review" || !autoCover) return;
+    setAutoCover(false);
+    void runOcr("capa");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, autoCover]);
 
   /** Fechar no meio da leitura perde o que foi lido: pergunta antes. */
   const close = () => {
@@ -269,6 +345,12 @@ export function ImportDialog({
     void persistStorage();
     try {
       if (mode === "processo" && info && items[0]) {
+        const number = info.number || typedCheck?.formatted || "";
+        if (!target && !number) {
+          ui.toast("Digite o número do processo (ou escolha um processo já cadastrado em “Guardar em”).", { kind: "error" });
+          setStep("review");
+          return;
+        }
         const out = info.docs.filter((_, i) => isOut(i));
         const docs = info.docs.filter((_, i) => !isOut(i));
         const it = items[0];
@@ -282,7 +364,7 @@ export function ImportDialog({
           create: target
             ? undefined
             : {
-                number: info.number || "",
+                number,
                 court: undefined,
                 system: info.system,
                 body: info.body,
@@ -376,6 +458,11 @@ export function ImportDialog({
   const scanned = items.reduce((n, it) => n + it.text.empty.length, 0);
   const pagesTotal = items.reduce((n, it) => n + it.text.pages.length, 0);
   const canOcr = items.some((it) => it.file && it.text.kind === "pdf" && it.text.empty.length);
+  const scanItem = items.find((it) => it.file && it.text.kind === "pdf" && it.text.empty.length);
+  // páginas digitalizadas cujo carimbo ainda não foi lido: no processo integral, dá para separar os documentos por ele
+  const pendingMargins = scanItem ? ocrTargets(scanItem, "margens").length : 0;
+  const canSplit = mode === "processo" && scanItem === items[0] && pendingMargins > 2;
+  const coverPending = !!scanItem && scanItem.text.empty.includes(1) && !scanItem.ocrPages?.includes(1);
 
   return (
     <Modal
@@ -494,7 +581,7 @@ export function ImportDialog({
                 <ScanText size={18} />
                 <div>
                   <strong>
-                    Lendo o texto das imagens: página {ocr.done} de {ocr.total}
+                    {ocr.label}: página {ocr.done} de {ocr.total}
                   </strong>
                   {" · "}
                   {ocrLeft(ocr)}
@@ -521,14 +608,25 @@ export function ImportDialog({
                       ? "Dá para ler o texto das imagens (OCR) aqui mesmo, no seu aparelho; a leitura pode ter erros, então confira o resultado."
                       : "Se puder, baixe o arquivo com texto no sistema do tribunal."}
                   </p>
+                  {canSplit && (
+                    <p>
+                      Para separar os documentos depressa, o {APP_NAME} lê só o carimbo do tribunal no alto e no pé de cada página. Ler o texto
+                      inteiro demora mais e serve para a pesquisa alcançar as páginas: dá para fazer em seguida, se quiser.
+                    </p>
+                  )}
                   {canOcr && (
                     <div className="banner-actions">
-                      <button className="btn btn-primary btn-sm" onClick={() => runOcr("todas")}>
+                      {canSplit && (
+                        <button className="btn btn-primary btn-sm" onClick={() => runOcr("margens")}>
+                          <Scissors size={15} /> Separar os documentos (cerca de {ocrMinutes(pendingMargins, undefined, "margins")} min)
+                        </button>
+                      )}
+                      <button className={`btn btn-sm ${canSplit ? "btn-ghost" : "btn-primary"}`} onClick={() => runOcr("todas")}>
                         <ScanText size={15} /> Ler o texto {scanned === 1 ? "da página" : `das ${scanned} páginas`} (cerca de {ocrMinutes(scanned)} min)
                       </button>
-                      {scanned > 6 && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => runOcr("inicio")}>
-                          Só as 4 primeiras (para conferir a capa)
+                      {coverPending && scanned > 6 && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => runOcr("capa")}>
+                          Ler só a capa
                         </button>
                       )}
                     </div>
@@ -544,6 +642,7 @@ export function ImportDialog({
                   <dd className="mono">
                     {info.number || "não encontrado"}
                     {info.number && numberFromName && <span className="muted small"> (lido do nome do arquivo)</span>}
+                    {info.number && info.numberGuessed && <span className="muted small"> (achado no texto do processo: confira)</span>}
                   </dd>
                 </div>
                 {info.system && (
@@ -575,7 +674,39 @@ export function ImportDialog({
                   ))}
                 </select>
               </Field>
-              {!target && !info.number && <p className="field-error">Não achei o número do processo no arquivo. Cadastre o processo antes e escolha-o acima.</p>}
+              {!target && !info.number && (
+                <Field
+                  label="Número do processo"
+                  hint={
+                    typedCheck ? (
+                      typedCheck.valid ? (
+                        `Número válido${typedCheck.court ? ` · ${typedCheck.court}` : ""}`
+                      ) : (
+                        <span className="field-error">{typedCheck.message}</span>
+                      )
+                    ) : typedNumber.trim() ? (
+                      <span className="field-error">Use o padrão CNJ: 0000000-00.0000.0.00.0000</span>
+                    ) : (
+                      "Não achei o número no arquivo: digite-o aqui (ele está na capa ou no sistema do tribunal)."
+                    )
+                  }
+                >
+                  <input
+                    value={typedNumber}
+                    onChange={(e) => {
+                      setTypedNumber(e.target.value);
+                      // o número digitado já é de um processo cadastrado: guarda nele
+                      const c = checkCaseNumber(e.target.value);
+                      const existing = c ? A.findCaseByNumber(ds, c.formatted) : undefined;
+                      if (existing) setTarget(existing.id);
+                    }}
+                    placeholder="0000000-00.0000.0.00.0000"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    disabled={!!ocr}
+                  />
+                </Field>
+              )}
               {!target && info.parties.length > 0 && (
                 <fieldset className="client-pick">
                   <legend>Partes encontradas: quem é o seu cliente?</legend>

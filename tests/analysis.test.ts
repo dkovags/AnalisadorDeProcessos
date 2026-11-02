@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyze, classifyText, explicitTerms, requestedDocs } from "../src/domain/analysis";
-import { courtRef, eprocDoc, eventText, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
+import { courtRef, eprocDoc, eventText, firstStampedPage, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
 import { cnjCheckDigits, cnjInFileName, formatCnj } from "../src/domain/cnj";
 import { fixOrdinals, fold } from "../src/domain/text";
 
@@ -216,6 +216,70 @@ describe("processo integral", () => {
       ["ABC1234", "inicial", [1, 2]],
       ["XYZ9876", "decisao", [3, 3]],
     ]);
+  });
+
+  it("PJe da Justiça do Trabalho: carimbo \"ID. a1b2c3d - Pág. 1\" e índice com o mesmo código", () => {
+    const number = formatCnj({ seq: "0000123", year: "2025", j: "5", tr: "12", origin: "0016", dv: cnjCheckDigits({ seq: "0000123", year: "2025", j: "5", tr: "12", origin: "0016" }) });
+    const info = parseCaseFile([
+      `Número: ${number}\nClasse: AÇÃO TRABALHISTA - RITO ORDINÁRIO\nÓrgão julgador: 1ª Vara do Trabalho de Exemplo
+Partes Procurador/Terceiro vinculado
+JOÃO TRABALHADOR (RECLAMANTE) ANA ADVOGADA (ADVOGADO)
+EMPRESA EXEMPLO S.A. (RECLAMADO)
+Documentos
+Id. Data da Assinatura Documento Tipo
+a1b2c3d 10/02/2025 09:00 Petição Inicial Petição Inicial
+e4f5a6b 10/02/2025 09:00 Substabelecimento Substabelecimento
+9c8d7e6 20/03/2025 14:00 Contestação Contestação`,
+      `EXMO. SR. JUIZ DO TRABALHO\nJOÃO TRABALHADOR vem propor RECLAMAÇÃO TRABALHISTA\nAssinado eletronicamente por: ANA ADVOGADA - Juntado em: 10/02/2025 09:00:00 - a1b2c3d\nID. a1b2c3d - Pág. 1`,
+      // leitura da imagem com um erro no código ("a1b2c3b") na página seguinte do mesmo documento
+      `Dos pedidos.\nlD. a1b2c3b - Pag. 2`,
+      `SUBSTABELECIMENTO\nID. e4f5a6b - Pág. 1`,
+      `CONTESTAÇÃO\nEMPRESA EXEMPLO S.A. vem contestar\nID, 9C8D7E6 – Pág. 1`,
+    ]);
+    expect(info.system).toBe("PJe");
+    expect(info.number).toBe(number);
+    expect(info.numberGuessed).toBeUndefined();
+    expect(info.docs.map((d) => [d.courtId, d.type, d.title, d.pages])).toEqual([
+      [undefined, "outro", "Capa e índice do processo", [1, 1]],
+      ["a1b2c3d", "inicial", "Petição Inicial", [2, 3]],
+      ["e4f5a6b", "procuracao", "Substabelecimento", [4, 4]],
+      ["9c8d7e6", "contestacao", "Contestação", [5, 5]],
+    ]);
+  });
+
+  it("documentos seguidos com códigos parecidos continuam separados (cada um começa na página 1)", () => {
+    const info = parseCaseFile([
+      `Número: 0801234-56.2023.8.20.5001`,
+      `PETIÇÃO\nNum. 40000001 - Pág. 1`,
+      `continuação\nNum. 40000001 - Pág. 2`,
+      `DOCUMENTO\nNum. 40000002 - Pág. 1`,
+    ]);
+    expect(info.docs.map((d) => [d.courtId, d.pages])).toEqual([
+      [undefined, [1, 1]],
+      ["40000001", [2, 3]],
+      ["40000002", [4, 4]],
+    ]);
+  });
+
+  it("sem número na capa (digitalizada), usa o número válido que mais aparece no processo, para conferir", () => {
+    const parts = { seq: "0801234", year: "2023", j: "8", tr: "20", origin: "5001" };
+    const dv = cnjCheckDigits(parts);
+    const number = formatCnj({ ...parts, dv });
+    const wrong = formatCnj({ ...parts, dv: dv === "11" ? "12" : "11" });
+    const pages = Array.from({ length: 20 }, () => "");
+    pages[14] = `DESPACHO\nProcesso nº ${number}\nIntime-se.`;
+    pages[16] = `CERTIDÃO\nProcesso ${number}. Certifico que intimei a parte.`;
+    // número citado uma vez (precedente) e um "número" com dígito errado (leitura ruim), que não ganham
+    pages[17] = `Conforme decidido no processo 1001234-56.2019.8.26.0100. Ver também ${wrong}, ${wrong} e ${wrong}.`;
+    const info = parseCaseFile(pages);
+    expect(info.number).toBe(number);
+    expect(info.numberGuessed).toBe(true);
+  });
+
+  it("acha a primeira página com carimbo de tribunal (antes dela ficam a capa e o índice)", () => {
+    expect(firstStampedPage(PJE_PAGES)).toBe(2);
+    expect(firstStampedPage(["capa", "índice", "texto\nID. a1b2c3d - Pág. 1"])).toBe(3);
+    expect(firstStampedPage(["sem carimbo"])).toBe(0);
   });
 
   it("formato desconhecido: um documento só, com número e partes do texto", () => {

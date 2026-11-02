@@ -189,13 +189,18 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
   tribunais. A capa pode variar entre os tribunais que usam o eproc; se algo não for reconhecido, o processo inteiro
   fica guardado como um documento só, pesquisável do mesmo jeito, e as partes podem ser completadas à mão. Quando o
   eproc divide o *download* em partes ("Parte 1", "Parte 2"...), importe cada parte no mesmo processo.
-- Páginas sem texto (imagem digitalizada, processo impresso para PDF): o Analisador de Processos avisa e oferece a
-  leitura do texto das imagens (OCR), feita no próprio aparelho, sem mandar o arquivo para a internet. Com o texto, ele
-  lê a capa, as partes e os carimbos das páginas, separa os documentos e a pesquisa passa a alcançá-los. A leitura leva
-  cerca de 1,5 segundo por página num computador de 4 núcleos (um processo de 700 páginas, perto de 20 minutos; no
-  celular, bem mais), dá para ler só as primeiras páginas para conferir a capa e pode ter erros: confira o número, as
-  partes e os documentos encontrados. O documento lido assim mostra o aviso "texto lido da imagem". O número do
-  processo, se estiver no nome do arquivo, também é aproveitado.
+- Páginas sem texto (imagem digitalizada, processo impresso para PDF): o Analisador de Processos lê o texto das imagens
+  (OCR) no próprio aparelho, sem mandar o arquivo para a internet, e a leitura pode ter erros: confira o número, as
+  partes e os documentos encontrados.
+  - Se a primeira página é imagem, a capa (as quatro primeiras páginas) é lida assim que o arquivo abre: dela saem o
+    número, a classe, as partes e o índice dos documentos.
+  - **Separar os documentos** lê só o carimbo do tribunal no alto e no pé de cada página ("Num. 123 - Pág. 1" no PJe,
+    "ID. a1b2c3d - Pág. 1" no PJe da Justiça do Trabalho): leva cerca de 0,3 segundo por página num computador de 4
+    núcleos (um processo de 700 páginas, uns 3 minutos) e já separa os documentos e marca os de representação.
+  - **Ler o texto** lê as páginas inteiras, para a pesquisa alcançá-las: de 3 a 7 segundos por página em cada núcleo
+    (700 páginas, de 15 a 40 minutos; no celular, bem mais).
+  - Sem o número na capa, o app procura o número válido que mais aparece no processo (e pede para conferir), aproveita
+    o do nome do arquivo ou deixa digitá-lo. O documento lido das imagens mostra o aviso "texto lido da imagem".
 - Atualizações: quando sai uma versão nova, uma faixa no alto da tela avisa e oferece **Atualizar agora**. Se uma aba
   aberta antes da atualização precisar de uma parte que mudou (como o leitor de PDF), o aplicativo recarrega sozinho e
   pede para enviar o arquivo de novo.
