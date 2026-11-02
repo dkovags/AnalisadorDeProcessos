@@ -7,7 +7,7 @@ import { cnjInFileName } from "../../domain/cnj";
 import { formatDate } from "../../domain/dates";
 import { findDates } from "../../domain/text";
 import { DOC_TYPES, POLES } from "../../domain/labels";
-import { pageMap, pagesToCut, remapRange, representationOf, type RepresentationKind } from "../../domain/representation";
+import { pageMap, pagesToCut, representationOf, type RepresentationKind } from "../../domain/representation";
 import { caseLabel } from "../../domain/select";
 import type { DocType, FileMeta } from "../../domain/types";
 import * as A from "../../store/actions";
@@ -270,33 +270,9 @@ export function ImportDialog({
     try {
       if (mode === "processo" && info && items[0]) {
         const out = info.docs.filter((_, i) => isOut(i));
-        let docs = info.docs.filter((_, i) => !isOut(i));
-        let it = items[0];
-        let cutPages = 0;
-        let cutNote = "";
-        if (out.length && cutFromPdf && it.file && kindOf(it.name, it.mime) === "pdf") {
-          const total = it.text.pages.length;
-          const cut = pagesToCut(total, out.map((d) => d.pages), docs.map((d) => d.pages));
-          if (cut.size && cut.size < total) {
-            try {
-              const map = pageMap(total, cut);
-              const bytes = await cutPdf(new Uint8Array(await it.file.arrayBuffer()), map);
-              const pages = it.text.pages.filter((_, i) => map[i + 1]);
-              const empty = it.text.empty.filter((p) => map[p]).map((p) => map[p]);
-              const layout = it.text.layout?.filter((_, i) => map[i + 1]);
-              const ocrPages = it.ocrPages?.filter((p) => map[p]).map((p) => map[p]);
-              it = { ...it, file: new File([bytes as BlobPart], it.name, { type: "application/pdf" }), size: bytes.byteLength, text: { ...it.text, pages, empty, layout }, ocrPages };
-              docs = docs.flatMap((d) => {
-                const pages = remapRange(d.pages, map);
-                return pages ? [{ ...d, pages }] : [];
-              });
-              cutPages = cut.size;
-            } catch (e) {
-              console.error(e);
-              cutNote = ` O PDF ficou inteiro (${e instanceof PdfCutError ? e.message : "não deu para cortar"}): os documentos saíram da lista, mas as páginas continuam no arquivo.`;
-            }
-          }
-        }
+        const docs = info.docs.filter((_, i) => !isOut(i));
+        const it = items[0];
+        // primeiro guarda o processo com o PDF inteiro; o corte vem depois, para um aparelho sem memória não perder a importação
         const meta = await saveFileOf(it);
         const res = run(store, A.importCaseFile, {
           file: meta,
@@ -331,6 +307,27 @@ export function ImportDialog({
                 })),
               },
         });
+        let cutPages = 0;
+        let cutNote = "";
+        if (out.length && cutFromPdf && it.file && kindOf(it.name, it.mime) === "pdf") {
+          const total = it.text.pages.length;
+          const cut = pagesToCut(total, out.map((d) => d.pages), docs.map((d) => d.pages));
+          if (cut.size && cut.size < total) {
+            try {
+              const map = pageMap(total, cut);
+              const bytes = await cutPdf(new Uint8Array(await it.file.arrayBuffer()), map);
+              const remap = (list?: number[]) => (list?.length ? list.filter((p) => map[p]).map((p) => map[p]) : undefined);
+              const smaller: FileMeta = { ...meta, id: newId("f"), size: bytes.byteLength, pageCount: total - cut.size, emptyPages: remap(meta.emptyPages), ocrPages: remap(meta.ocrPages) };
+              await store.saveFile(smaller, new Blob([bytes as BlobPart], { type: "application/pdf" }), it.text.pages.filter((_, i) => map[i + 1]));
+              // os documentos guardados passam para o PDF menor, com as páginas renumeradas, e o inteiro sai
+              run(store, A.cutDocs, { fileId: meta.id, remove: [], file: smaller, map });
+              cutPages = cut.size;
+            } catch (e) {
+              console.error(e);
+              cutNote = ` O PDF ficou inteiro (${e instanceof PdfCutError ? e.message : "não deu para cortar"}): os documentos saíram da lista, mas as páginas continuam no arquivo.`;
+            }
+          }
+        }
         onClose();
         const left = out.length
           ? ` ${out.length === 1 ? "1 documento de representação ficou" : `${out.length} documentos de representação ficaram`} de fora${cutPages ? ` (${cutPages === 1 ? "1 página cortada" : `${cutPages} páginas cortadas`} do PDF)` : ""}.`
