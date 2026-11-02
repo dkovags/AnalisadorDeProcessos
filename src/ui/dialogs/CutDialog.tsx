@@ -58,16 +58,18 @@ export function CutDialog({ docId, onClose }: { docId: ID; onClose: () => void }
         if (cutSet.size && cutSet.size < total && blob) {
           try {
             map = pageMap(total, cutSet);
-            const bytes = await cutPdf(new Uint8Array(await blob.arrayBuffer()), map);
+            const smallerPdf = await cutPdf(blob, map);
             const m = map;
+            const remap = (list?: number[]) => (list?.length ? list.filter((p) => m[p]).map((p) => m[p]) : undefined);
             newFile = {
               ...file,
               id: newId("f"),
-              size: bytes.byteLength,
+              size: smallerPdf.size,
               pageCount: total - cutSet.size,
-              emptyPages: file.emptyPages?.filter((p) => m[p]).map((p) => m[p]),
+              emptyPages: remap(file.emptyPages),
+              ocrPages: remap(file.ocrPages),
             };
-            await store.saveFile(newFile, new Blob([bytes as BlobPart], { type: "application/pdf" }), pages.filter((_, i) => m[i + 1]));
+            await store.saveFile(newFile, smallerPdf, pages.filter((_, i) => m[i + 1]));
             note = ` ${cutSet.size === 1 ? "1 página cortada" : `${cutSet.size} páginas cortadas`} do PDF.`;
           } catch (e) {
             console.error(e);

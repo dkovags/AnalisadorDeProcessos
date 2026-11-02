@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDict, PDFDocument, PDFName, PDFNumber, type PDFRef, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import type { CaseFileInfo } from "../src/domain/casefile";
 import { pageMap, pagesToCut, remapRange, representationOf } from "../src/domain/representation";
@@ -71,21 +71,75 @@ describe("corte do PDF", () => {
   it("refaz o PDF só com as páginas que ficam, na ordem", async () => {
     const original = await makePdf(5);
     const map = pageMap(5, new Set([2, 4]));
-    const cut = await cutPdf(original, map);
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const out = await extractPdf(cut, pdfjs as never);
+    const cut = await cutPdf(new Blob([original as BlobPart]), map);
+    const out = await extractPdf(new Uint8Array(await cut.arrayBuffer()), (await import("pdfjs-dist/legacy/build/pdf.mjs")) as never);
     expect(out.pages.map((p) => p.trim())).toEqual(["Pagina numero 1", "Pagina numero 3", "Pagina numero 5"]);
   });
 
   it("não tenta refazer no navegador um PDF grande demais", async () => {
     // só o tamanho importa aqui: não precisa alocar 400 MB no teste
-    const huge = { byteLength: MAX_CUT_BYTES + 1 } as Uint8Array;
+    const huge = { size: MAX_CUT_BYTES + 1 } as Blob;
     await expect(cutPdf(huge, pageMap(2, new Set([1])))).rejects.toThrow(/mais de 400 MB/);
   });
 
+  it("corta em árvores de páginas aninhadas e tira o que só as páginas cortadas usavam", async () => {
+    // 7 páginas em dois grupos (1-4 e 5-7); a página 1 tem um link para a 2; a 2 tem uma imagem só dela; a 3 e a 6
+    // usam a mesma imagem
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const ctx = doc.context;
+    const image = (kb: number) => ctx.register(ctx.stream(new Uint8Array(kb * 1024).fill(7), { Type: "XObject", Subtype: "Image", Width: 10, Height: 10, ColorSpace: "DeviceGray", BitsPerComponent: 8 }));
+    const shared = image(150);
+    const only2 = image(300);
+    for (let i = 1; i <= 7; i++) {
+      const page = doc.addPage([300, 300]);
+      page.drawText(`Pagina numero ${i}`, { x: 40, y: 150, size: 14, font });
+      if (i === 2) page.node.setXObject(PDFName.of("Im2"), only2);
+      if (i === 3 || i === 6) page.node.setXObject(PDFName.of("Sh"), shared);
+    }
+    const [p1, p2] = doc.getPages();
+    p1.node.set(PDFName.of("Annots"), ctx.obj([ctx.register(ctx.obj({ Type: "Annot", Subtype: "Link", Rect: [0, 0, 50, 50], Dest: [p2.ref, "Fit"] }))]));
+    const root = doc.catalog.Pages();
+    const rootRef = doc.catalog.get(PDFName.of("Pages")) as PDFRef;
+    const refs = root.Kids().asArray() as PDFRef[];
+    const group = (list: PDFRef[]) => {
+      const ref = ctx.register(ctx.obj({ Type: "Pages", Kids: list, Count: list.length, Parent: rootRef }));
+      for (const r of list) ctx.lookup(r, PDFDict).set(PDFName.of("Parent"), ref);
+      return ref;
+    };
+    root.set(PDFName.of("Kids"), ctx.obj([group(refs.slice(0, 4)), group(refs.slice(4))]));
+    const original = await doc.save();
+    expect(original.byteLength).toBeGreaterThan(450 * 1024);
+
+    // saem a 2 (com a imagem só dela) e todo o segundo grupo
+    const cut = await cutPdf(new Blob([original as BlobPart]), pageMap(7, new Set([2, 5, 6, 7])));
+    // o pdf.js fica com os bytes que recebe: cada leitura usa uma cópia
+    const out = await extractPdf(new Uint8Array(await cut.arrayBuffer()), (await import("pdfjs-dist/legacy/build/pdf.mjs")) as never);
+    expect(out.pages.map((p) => p.trim())).toEqual(["Pagina numero 1", "Pagina numero 3", "Pagina numero 4"]);
+    // a imagem da página cortada saiu, mesmo com o link da página 1 apontando para ela; a compartilhada ficou
+    expect(cut.size).toBeGreaterThan(150 * 1024);
+    expect(cut.size).toBeLessThan(200 * 1024);
+    // o grupo que ficou vazio saiu da árvore, e o PDF abre de novo sem erro
+    const again = await PDFDocument.load(new Uint8Array(await cut.arrayBuffer()));
+    expect(again.getPageCount()).toBe(3);
+    expect(again.catalog.Pages().Kids().size()).toBe(1);
+  });
+
+  it("não corta uma página que aparece de novo no PDF", async () => {
+    const doc = await PDFDocument.load(await makePdf(2));
+    const root = doc.catalog.Pages();
+    const [first] = root.Kids().asArray() as PDFRef[];
+    root.Kids().push(first);
+    root.set(PDFName.of("Count"), PDFNumber.of(3));
+    const twice = await doc.save();
+    const cut = await cutPdf(new Blob([twice as BlobPart]), pageMap(3, new Set([1, 2])));
+    const out = await extractPdf(new Uint8Array(await cut.arrayBuffer()), (await import("pdfjs-dist/legacy/build/pdf.mjs")) as never);
+    expect(out.pages.map((p) => p.trim())).toEqual(["Pagina numero 1"]);
+  });
+
   it("recusa quando o PDF não é o que foi lido", async () => {
-    await expect(cutPdf(await makePdf(3), pageMap(5, new Set([2])))).rejects.toBeInstanceOf(PdfCutError);
-    await expect(cutPdf(new Uint8Array([1, 2, 3]), pageMap(2, new Set([1])))).rejects.toThrow(/não pôde ser aberto/);
+    await expect(cutPdf(new Blob([(await makePdf(3)) as BlobPart]), pageMap(5, new Set([2])))).rejects.toBeInstanceOf(PdfCutError);
+    await expect(cutPdf(new Blob([new Uint8Array([1, 2, 3])]), pageMap(2, new Set([1])))).rejects.toThrow(/não pôde ser aberto/);
   });
 });
 

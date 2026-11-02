@@ -274,6 +274,35 @@ try {
   await page.getByText(/1 documento cortado da base\. 1 página cortada do PDF\./).waitFor();
   expect(/5 páginas/.test(await integral.innerText()), `depois do corte, o PDF deveria ter 5 páginas: ${await integral.innerText()}`);
   expect((await page.getByText("Procuração Ana").count()) === 0, "a procuração cortada continua na lista");
+  // o PDF guardado no aparelho é mesmo o cortado: abre, tem 5 páginas e não tem mais as páginas que saíram
+  const stored = await page.evaluate(async () => {
+    const db = await new Promise((ok, fail) => {
+      const r = indexedDB.open("autos");
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => fail(r.error);
+    });
+    const blobs = await new Promise((ok, fail) => {
+      const r = db.transaction("arquivos").objectStore("arquivos").getAll();
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => fail(r.error);
+    });
+    db.close();
+    return Promise.all(blobs.filter((b) => b.type === "application/pdf").map(async (b) => [...new Uint8Array(await b.arrayBuffer())]));
+  });
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const storedTexts = [];
+  for (const bytes of stored) {
+    const task = pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, verbosity: 0 });
+    const doc = await task.promise;
+    const texts = [];
+    for (let i = 1; i <= doc.numPages; i++) texts.push((await (await doc.getPage(i)).getTextContent()).items.map((t) => t.str).join(" "));
+    await task.destroy();
+    if (texts[0]?.includes(number)) storedTexts.push(texts);
+  }
+  expect(storedTexts.length === 1, `esperava um PDF guardado deste processo, vieram ${storedTexts.length}`);
+  expect(storedTexts[0].length === 5, `o PDF guardado deveria ter 5 páginas, tem ${storedTexts[0].length}`);
+  expect(!/Outorgante|substabelece|credencia o preposto/.test(storedTexts[0].join(" ")), "o PDF guardado ainda tem páginas cortadas");
+  expect(/CONTESTAÇÃO/.test(storedTexts[0][3]) && /DESPACHO/.test(storedTexts[0][4]), `páginas fora de ordem: ${JSON.stringify(storedTexts[0])}`);
 
 
   // pesquisa nos documentos do processo

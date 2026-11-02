@@ -61,8 +61,9 @@ aplicativo e funciona sem internet.
   atos constitutivos, como contrato social, estatuto, atas e cartão do CNPJ) já vêm marcados para ficar de fora, e as
   procurações podem sair também; as páginas deles são cortadas do PDF guardado, que fica menor (o PDF é refeito no
   próprio navegador, no computador ou no celular, até 400 MB; acima disso, os documentos saem da lista e o arquivo fica
-  inteiro). Refazer um PDF grande pede bastante memória: se o aplicativo fechar no meio da importação num celular
-  mais simples, importe de novo com a opção "Cortar do PDF guardado" desmarcada. Na lista, dá para
+  inteiro). O corte não copia o arquivo: as imagens do PDF novo são pedaços do original, e a memória usada fica perto
+  do tamanho do arquivo (no teste, um PDF de 400 MB foi cortado com cerca de 0,45 GB de memória). O processo é
+  guardado antes do corte: se faltar memória, a importação não se perde, e o PDF fica inteiro. Na lista, dá para
   marcar ou desmarcar qualquer documento. Num processo já importado, o botão **Cortar documentos**, na aba
   **Documentos**, faz o mesmo corte depois.
 

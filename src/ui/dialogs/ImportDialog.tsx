@@ -314,11 +314,13 @@ export function ImportDialog({
           const cut = pagesToCut(total, out.map((d) => d.pages), docs.map((d) => d.pages));
           if (cut.size && cut.size < total) {
             try {
+              // só corta depois que o processo estiver gravado no aparelho
+              await store.flush();
               const map = pageMap(total, cut);
-              const bytes = await cutPdf(new Uint8Array(await it.file.arrayBuffer()), map);
+              const smallerPdf = await cutPdf(it.file, map);
               const remap = (list?: number[]) => (list?.length ? list.filter((p) => map[p]).map((p) => map[p]) : undefined);
-              const smaller: FileMeta = { ...meta, id: newId("f"), size: bytes.byteLength, pageCount: total - cut.size, emptyPages: remap(meta.emptyPages), ocrPages: remap(meta.ocrPages) };
-              await store.saveFile(smaller, new Blob([bytes as BlobPart], { type: "application/pdf" }), it.text.pages.filter((_, i) => map[i + 1]));
+              const smaller: FileMeta = { ...meta, id: newId("f"), size: smallerPdf.size, pageCount: total - cut.size, emptyPages: remap(meta.emptyPages), ocrPages: remap(meta.ocrPages) };
+              await store.saveFile(smaller, smallerPdf, it.text.pages.filter((_, i) => map[i + 1]));
               // os documentos guardados passam para o PDF menor, com as páginas renumeradas, e o inteiro sai
               run(store, A.cutDocs, { fileId: meta.id, remove: [], file: smaller, map });
               cutPages = cut.size;
