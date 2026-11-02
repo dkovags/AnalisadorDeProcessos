@@ -1,7 +1,8 @@
 import { classifyText, docTypeFromLabel } from "./analysis";
-import { CNJ_RE, formatCnj, isValidCnj, parseCnj } from "./cnj";
+import { CNJ_RE, cnjInText, formatCnj, parseCnj } from "./cnj";
 import { validDate } from "./dates";
 import { DOC_TYPES } from "./labels";
+import { isRepresentationTitle } from "./representation";
 import type { DocType, PersonKind, Pole } from "./types";
 import { findDates, fixOrdinals, fold, isUpper, parseMoney, squash, titleCase } from "./text";
 
@@ -181,8 +182,10 @@ function parseCover(cover: string[], info: CaseFileInfo) {
   for (const line of cover) {
     if (!/^\s*(?:n[o.°]?\s*(?:do\s+)?processo|numero(?:\s+do\s+processo)?|processo\s*n?[o.°]*)\b/.test(fold(line))) continue;
     const c = parseCnj(line.match(CNJ_RE)?.[0] || "");
-    if (c) {
-      info.number = formatCnj(c);
+    // capa lida da imagem: o número pode vir com espaços ou letras no lugar de algarismos
+    const loose = c ? undefined : cnjInText(line)[0];
+    if (c || loose) {
+      info.number = c ? formatCnj(c) : loose;
       break;
     }
   }
@@ -276,6 +279,33 @@ function nearlySame(a: string, b: string): boolean {
   return rest(a, i + 1) === rest(b, i + 1) || rest(a, i) === rest(b, i + 1) || rest(a, i + 1) === rest(b, i);
 }
 
+// timbre, endereçamento e carimbos: o que costuma vir no alto da página antes do título do documento
+const NOT_HEADING =
+  /^(poder judiciario|justica (do trabalho|federal|estadual|eleitoral|militar)|tribunal\b|estado d[aeo]\b|ministerio\b|republica\b|excelentissim|exm[ao]\b|ilustrissim|meritissim|ao juiz|a[o]? (douto|meritissimo|excelentissimo)|juiz[oa]?\b|vara\b|comarca\b|processo\b|pje\b|assinado|numero\b|n[o°º]\b|id[.,]?\s|fls?\b|folha|pagina|documento assinado|https?:|www\.)/;
+
+/**
+ * Título do documento no alto da primeira página ("SUBSTABELECIMENTO", "CONTESTAÇÃO"), para quando o índice não o
+ * traz: uma linha curta, em maiúsculas, com o nome de um tipo de documento.
+ */
+export function headingTitle(text: string): string | undefined {
+  const lines = text
+    .split("\n")
+    .map((l) => squash(l).replace(/[.:;,\s]+$/, ""))
+    .filter((l) => l.replace(/[^\p{L}]/gu, "").length >= 4)
+    .slice(0, 6);
+  for (const line of lines) {
+    if (NOT_HEADING.test(fold(line)) || line.length > 60 || !isUpper(line)) continue;
+    if (docTypeFromLabel(line) || isRepresentationTitle(line)) return titleCase(line);
+  }
+  return undefined;
+}
+
+/** Entrada do índice para um código lido com um erro (só se uma única entrada servir). */
+function nearEntry(index: Map<string, IndexEntry>, id: string): IndexEntry | undefined {
+  const near = [...index.values()].filter((e) => nearlySame(e.id, id));
+  return near.length === 1 ? near[0] : undefined;
+}
+
 function parsePje(pages: string[], info: CaseFileInfo) {
   info.system = "PJe";
   parsePjeCover(pages, info);
@@ -299,13 +329,16 @@ function parsePje(pages: string[], info: CaseFileInfo) {
     lastPag = pag;
     if ((id !== currentId && !misread) || !current) {
       currentId = id;
-      const entry = index.get(id);
+      const entry = index.get(id) || nearEntry(index, id);
       const signed = text.match(PJE_SIGNED);
-      const typeFromIndex = entry?.typeLabel ? docTypeFromLabel(entry.typeLabel) : undefined;
-      const type = typeFromIndex && typeFromIndex !== "peticao" ? typeFromIndex : classifyText(text) !== "outro" ? classifyText(text) : typeFromIndex || "outro";
+      // sem o índice (capa que não veio ou não foi lida), o título que está no alto da página
+      const heading = entry ? undefined : headingTitle(text);
+      const typeFromIndex = entry?.typeLabel ? docTypeFromLabel(entry.typeLabel) : heading ? docTypeFromLabel(heading) : undefined;
+      const classified = classifyText(text);
+      const type = typeFromIndex && typeFromIndex !== "peticao" ? typeFromIndex : classified !== "outro" ? classified : typeFromIndex || "outro";
       current = {
         courtId: id,
-        title: entry?.title || DOC_TYPES[type],
+        title: entry?.title || heading || DOC_TYPES[type],
         label: entry?.typeLabel,
         type,
         date: entry?.date || (signed ? findDates(signed[2])[0]?.iso : undefined),
@@ -935,15 +968,14 @@ export function courtRef(courtId?: string): string | undefined {
   return `Id. ${courtId}`;
 }
 
+/**
+ * Número que mais aparece no texto. Com `validOnly`, só os de dígito verificador certo, achados também em texto lido de
+ * imagem (com espaços ou letras no lugar de algarismos).
+ */
 function mostFrequentCnj(text: string, validOnly = false): string | undefined {
   const count = new Map<string, number>();
-  for (const m of text.matchAll(CNJ_RE)) {
-    const c = parseCnj(m[0]);
-    if (!c) continue;
-    const n = formatCnj(c);
-    if (validOnly && !isValidCnj(n)) continue;
-    count.set(n, (count.get(n) || 0) + 1);
-  }
+  const found = validOnly ? cnjInText(text) : [...text.matchAll(CNJ_RE)].flatMap((m) => (parseCnj(m[0]) ? [formatCnj(parseCnj(m[0])!)] : []));
+  for (const n of found) count.set(n, (count.get(n) || 0) + 1);
   return [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
@@ -984,9 +1016,9 @@ export function parseCaseFile(pages: string[], opts: { outline?: OutlineEntry[];
   }
 
   if (!info.number) {
-    // número mais frequente nas primeiras páginas; sem nenhum ali (capa digitalizada), o número válido que mais
-    // aparece no resto do processo (cabeçalhos de decisões, certidões e intimações)
-    info.number = mostFrequentCnj(sample) || mostFrequentCnj(pages.join("\n"), true);
+    // o número válido que mais aparece nas primeiras páginas ou, sem nenhum ali (capa digitalizada), no resto do
+    // processo (carimbos, cabeçalhos de decisões, certidões e intimações); por último, qualquer número das primeiras
+    info.number = mostFrequentCnj(sample, true) || mostFrequentCnj(pages.join("\n"), true) || mostFrequentCnj(sample);
     if (info.number) info.numberGuessed = true;
   }
   if (!info.parties.length) info.parties = partiesFromLabels(sample);

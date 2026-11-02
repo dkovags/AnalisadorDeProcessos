@@ -45,6 +45,11 @@ function codesOf(...texts: (string | undefined)[]): string[] {
   return texts.flatMap((t) => [...(t || "").matchAll(/\b([A-Za-z]{2,30})\d{1,3}\b/g)].map((m) => m[1].toUpperCase()));
 }
 
+/** O nome é de um documento de representação (substabelecimento, carta de preposição, contrato social...)? */
+export function isRepresentationTitle(title: string): boolean {
+  return REPRESENTATION.test(fold(title).replace(/\s+/g, " "));
+}
+
 /** O documento é de representação ou uma procuração? (pelo nome, pelo tipo dado pelo sistema e pelo código do eproc) */
 export function representationOf(d: { title: string; type: DocType; courtId?: string; label?: string }): RepresentationKind | undefined {
   const f = fold(`${d.title} ${d.label || ""}`).replace(/\s+/g, " ").trim();

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { analyze, classifyText, explicitTerms, requestedDocs } from "../src/domain/analysis";
-import { courtRef, eprocDoc, eventText, firstStampedPage, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
-import { cnjCheckDigits, cnjInFileName, formatCnj } from "../src/domain/cnj";
+import { courtRef, eprocDoc, eventText, firstStampedPage, headingTitle, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
+import { representationOf } from "../src/domain/representation";
+import { cnjCheckDigits, cnjInFileName, cnjInText, formatCnj } from "../src/domain/cnj";
 import { fixOrdinals, fold } from "../src/domain/text";
 
 const DJEN = `Processo: 0801234-56.2023.8.20.5001
@@ -274,6 +275,56 @@ e4f5a6b 10/02/2025 09:00 Substabelecimento Substabelecimento
     const info = parseCaseFile(pages);
     expect(info.number).toBe(number);
     expect(info.numberGuessed).toBe(true);
+  });
+
+  it("acha o número em texto lido de imagem: espaços, letras no lugar de algarismos e o carimbo de cada página", () => {
+    const parts = { seq: "0000123", year: "2025", j: "5", tr: "12", origin: "0016" };
+    const number = formatCnj({ ...parts, dv: cnjCheckDigits(parts) });
+    const ocr = number.replace("-", "- ").replace(/0016$/, "OO16");
+    expect(cnjInText(`Número do processo: ${ocr}`)).toEqual([number]);
+    // dígito verificador errado, ou palavra que lembra algarismos: nada
+    expect(cnjInText(`Número do processo: ${number.replace(/^0000123/, "0000124")}`)).toEqual([]);
+    expect(cnjInText("SOBBOSI-SB.BOSS.S.SB.BOSS")).toEqual([]);
+    // capa digitalizada sem número; o pé de cada página (lido das margens) traz o número do processo e o carimbo
+    const pages = ["capa sem número legível", ...Array.from({ length: 5 }, (_, i) => `texto\nNúmero do processo: ${ocr}\nID. a1b2c3d - Pág. ${i + 1}`)];
+    const info = parseCaseFile(pages);
+    expect(info.number).toBe(number);
+    expect(info.numberGuessed).toBe(true);
+    // o mesmo número na capa, com o rótulo, vale como lido da capa
+    const cover = parseCaseFile([`Número: ${ocr}`, "x\nNum. 40000001 - Pág. 1"]);
+    expect(cover.number).toBe(number);
+    expect(cover.numberGuessed).toBeUndefined();
+  });
+
+  it("sem índice, o título do documento vem do alto da página (e o substabelecimento é reconhecido)", () => {
+    expect(headingTitle("PODER JUDICIÁRIO\nJUSTIÇA DO TRABALHO\nSUBSTABELECIMENTO\nAna Advogada substabelece...")).toBe("Substabelecimento");
+    expect(headingTitle("SILVA ADVOGADOS\nEXCELENTÍSSIMO SENHOR JUIZ\nCARTA DE PREPOSIÇÃO")).toBe("Carta de Preposição");
+    expect(headingTitle("EXMO. SR. JUIZ DA 1ª VARA DO TRABALHO\nRECLAMAÇÃO TRABALHISTA")).toBe("Reclamação Trabalhista");
+    // nome de parte em maiúsculas, linha longa ou texto comum: não é título
+    expect(headingTitle("MARIA EXEMPLO\nbrasileira, casada")).toBeUndefined();
+    expect(headingTitle("A RECLAMADA VEM APRESENTAR SUA CONTESTAÇÃO AOS TERMOS DA RECLAMAÇÃO TRABALHISTA PROPOSTA")).toBeUndefined();
+    expect(headingTitle("Contestação apresentada no prazo")).toBeUndefined();
+    const info = parseCaseFile([
+      "Documentos do processo (cópia)",
+      "RECLAMAÇÃO TRABALHISTA\nID. a1b2c3d - Pág. 1",
+      "SUBSTABELECIMENTO\nID. e4f5a6b - Pág. 1",
+      "CARTA DE PREPOSIÇÃO\nID. 7f6e5d4 - Pág. 1",
+      "CONTESTAÇÃO\nID. 9c8d7e6 - Pág. 1",
+    ]);
+    expect(info.docs.slice(1).map((d) => [d.title, d.type, representationOf(d) || ""])).toEqual([
+      ["Reclamação Trabalhista", "inicial", ""],
+      ["Substabelecimento", "procuracao", "representacao"],
+      ["Carta de Preposição", "outro", "representacao"],
+      ["Contestação", "contestacao", ""],
+    ]);
+  });
+
+  it("código lido com um erro ainda acha o documento no índice (se só um servir)", () => {
+    const info = parseCaseFile([
+      `Número: 0801234-56.2023.8.20.5001\nDocumentos\nId. Data da Assinatura Documento Tipo\na1b2c3d 10/02/2025 09:00 Petição Inicial Petição Inicial`,
+      "texto\nID. alb2c3d - Pág. 1",
+    ]);
+    expect(info.docs[1]).toMatchObject({ courtId: "alb2c3d", title: "Petição Inicial", type: "inicial" });
   });
 
   it("acha a primeira página com carimbo de tribunal (antes dela ficam a capa e o índice)", () => {

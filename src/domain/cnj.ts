@@ -108,3 +108,24 @@ export function cnjInFileName(name: string): string | undefined {
   const pick = found.find((d) => isValidCnj(d)) || found[0];
   return pick ? normalizeCaseNumber(pick) : undefined;
 }
+
+// algarismos que a leitura de imagens (OCR) costuma trocar por letras parecidas
+const OCR_DIGIT: Record<string, string> = { O: "0", o: "0", D: "0", Q: "0", I: "1", l: "1", i: "1", "|": "1", Z: "2", S: "5", s: "5", G: "6", B: "8", g: "9" };
+const D = "[\\dOoDQIli|ZSsGBg]";
+const LOOSE_CNJ = new RegExp(`(?<![\\dA-Za-z])(${D}{7})\\s?[-–—]?\\s?(${D}{2})\\s?[.,]?\\s?(${D}{4})\\s?[.,]?\\s?(${D})\\s?[.,]?\\s?(${D}{2})\\s?[.,]?\\s?(${D}{4})(?![\\dA-Za-z])`, "g");
+
+/**
+ * Números CNJ válidos num texto lido de imagem ou com espaços no meio ("0000123- 45.2025.5.12.O016"): as letras
+ * parecidas com algarismos são trocadas, e só fica o que tem o dígito verificador certo.
+ */
+export function cnjInText(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(LOOSE_CNJ)) {
+    const raw = m.slice(1).join("");
+    // quase tudo precisa ser algarismo de verdade: uma palavra qualquer não vira número
+    if ((raw.match(/\d/g) || []).length < 16) continue;
+    const digits = raw.replace(/[^\d]/g, (ch) => OCR_DIGIT[ch] ?? ch);
+    if (isValidCnj(digits)) out.push(normalizeCaseNumber(digits));
+  }
+  return out;
+}

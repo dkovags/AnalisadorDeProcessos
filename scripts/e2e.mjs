@@ -61,6 +61,31 @@ async function renderPdf(path, pages, { outline = false, scanned = false } = {})
   await page.close();
 }
 
+/**
+ * Processo da Justiça do Trabalho montado como o exemplo real que motivou o teste: a primeira página tem algum texto
+ * (sem o número do processo) e as outras são imagens, com o carimbo do PJe-JT no pé ("ID. a1b2c3d - Pág. 1") e o
+ * número do processo nele.
+ */
+async function makeLaborPdf(path, number) {
+  const foot = (id, pag) =>
+    `<div class="stamp">Assinado eletronicamente por: ANA ADVOGADA - Juntado em: 10/02/2025 09:00:00 - ${id}<br>Número do processo: ${number}<br>Número do documento: 25021009000000000000012345678<span style="position:absolute;left:560px">ID. ${id} - Pág. ${pag}</span></div>`;
+  const docs = [
+    ["a1b2c3d", "RECLAMAÇÃO TRABALHISTA", 2],
+    ["e4f5a6b", "SUBSTABELECIMENTO", 1],
+    ["9c8d7e6", "CONTESTAÇÃO", 2],
+  ];
+  const scanned = docs.flatMap(([id, title, n]) => Array.from({ length: n }, (_, i) => `<h3>${title}</h3><p>Página ${i + 1} do documento.</p>${foot(id, i + 1)}`));
+  const page = await browser.newPage({ viewport: { width: 794, height: 1123 }, deviceScaleFactor: 2 });
+  await page.setContent(`<html><head><style>body{font-family:Arial,sans-serif;font-size:12px;margin:0}.p{height:1040px;position:relative;padding:30px;box-sizing:border-box}.stamp{position:absolute;bottom:20px;left:30px;font-size:9px;width:730px}</style></head><body>${scanned.map((p) => `<div class="p">${p}</div>`).join("")}</body></html>`);
+  const shots = [];
+  for (let i = 0; i < scanned.length; i++) shots.push((await page.locator(".p").nth(i).screenshot({ type: "jpeg", quality: 85 })).toString("base64"));
+  await page.setContent(
+    `<html><body style="margin:0;font-family:Arial,sans-serif"><div style="height:1040px;padding:30px;box-sizing:border-box;page-break-after:always"><h2>Documentos do processo (cópia)</h2><p>Arquivo montado a partir do sistema do tribunal.</p></div>${shots.map((b) => `<img src="data:image/jpeg;base64,${b}" style="display:block;width:794px;height:1040px;page-break-after:always">`).join("")}</body></html>`,
+  );
+  await page.pdf({ path, format: "A4", margin: { top: 0, bottom: 0, left: 0, right: 0 } });
+  await page.close();
+}
+
 /** PDF só de imagens (como um processo impresso para PDF ou digitalizado): o texto é desenhado num canvas, sem camada de texto. */
 async function makeImagePdf(path, pages = 2) {
   const page = await browser.newPage();
@@ -481,6 +506,32 @@ try {
   await page.getByRole("button", { name: /Ler o texto das 4 páginas/ }).waitFor();
   expect((await page.getByRole("button", { name: /Separar os documentos/ }).count()) === 0, "o botão de separar deveria sumir depois de ler os carimbos");
   await shot(page, "07e-processo-lido-das-imagens");
+  await page.keyboard.press("Escape");
+  await closed(page);
+
+  // Justiça do Trabalho: só a primeira página tem texto, sem o número; os carimbos dão o número e separam os documentos
+  const laborNumber = cnj("0000123", "2025", "5", "12", "0016");
+  const laborPath = `${OUT}/processo-trabalhista.pdf`;
+  await makeLaborPdf(laborPath, laborNumber);
+  await page.goto(URL + "#/processos");
+  await page.getByRole("button", { name: /Importar PDF do processo/ }).click();
+  await page.locator(".modal input[type=file]").setInputFiles(laborPath);
+  await page.getByText(/5 de 6 páginas não têm texto/).waitFor();
+  await page.getByLabel("Número do processo").waitFor();
+  await page.getByRole("button", { name: /Separar os documentos/ }).click();
+  await page.getByText(/Carimbo lido em 5 páginas\. 4 documentos separados\./).waitFor({ timeout: 180000 });
+  await page.getByText(laborNumber).first().waitFor();
+  await page.getByText(/achado no texto do processo: confira/).waitFor();
+  expect((await page.getByLabel("Número do processo").count()) === 0, "com o número achado, o campo para digitá-lo deveria sumir");
+  const laborDocs = await page.locator(".doc-preview-row").allInnerTexts();
+  expect(
+    laborDocs.length === 4 &&
+      /Reclamação Trabalhista[^]*p\. 2–3/.test(laborDocs[1]) &&
+      /Substabelecimento[^]*fica de fora[^]*p\. 4\b/.test(laborDocs[2]) &&
+      /Contestação[^]*p\. 5–6/.test(laborDocs[3]),
+    `documentos da Justiça do Trabalho (o título vem do alto da página; o substabelecimento fica de fora): ${JSON.stringify(laborDocs)}`,
+  );
+  await shot(page, "07f-processo-trabalhista");
   await page.keyboard.press("Escape");
   await closed(page);
 

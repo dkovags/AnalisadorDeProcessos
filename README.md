@@ -196,7 +196,9 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
     número, a classe, as partes e o índice dos documentos.
   - **Separar os documentos** lê só o carimbo do tribunal no alto e no pé de cada página ("Num. 123 - Pág. 1" no PJe,
     "ID. a1b2c3d - Pág. 1" no PJe da Justiça do Trabalho): leva cerca de 0,3 segundo por página num computador de 4
-    núcleos (um processo de 700 páginas, uns 3 minutos) e já separa os documentos e marca os de representação.
+    núcleos (um processo de 700 páginas, uns 3 minutos) e já separa os documentos e marca os de representação. Sem o
+    índice da capa, o nome de cada documento vem do título no alto da página ("SUBSTABELECIMENTO", "CONTESTAÇÃO"), e
+    o número do processo pode vir dos carimbos e cabeçalhos lidos.
   - **Ler o texto** lê as páginas inteiras, para a pesquisa alcançá-las: de 3 a 7 segundos por página em cada núcleo
     (700 páginas, de 15 a 40 minutos; no celular, bem mais).
   - Sem o número na capa, o app procura o número válido que mais aparece no processo (e pede para conferir), aproveita

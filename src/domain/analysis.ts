@@ -605,7 +605,7 @@ export function docTypeFromLabel(label: string): DocType | undefined {
   const f = fold(label);
   const table: [RegExp, DocType][] = [
     [/emenda/, "peticao"],
-    [/peticao inicial|\binicial\b/, "inicial"],
+    [/peticao inicial|\binicial\b|reclamacao trabalhista|reclamatoria trabalhista|^acao trabalhista/, "inicial"],
     [/contrarrazoes/, "contrarrazoes"],
     [/contestacao|defesa/, "contestacao"],
     [/replica|impugnacao a contestacao/, "replica"],
@@ -619,7 +619,7 @@ export function docTypeFromLabel(label: string): DocType | undefined {
     [/citacao/, "citacao"],
     [/mandado/, "mandado"],
     [/certidao/, "certidao"],
-    [/ata|termo de audiencia|audiencia/, "ata"],
+    [/\bata\b|termo de audiencia|audiencia/, "ata"],
     [/laudo/, "laudo"],
     [/parecer/, "parecer"],
     [/procuracao|substabelecimento/, "procuracao"],

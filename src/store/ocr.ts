@@ -36,8 +36,8 @@ export interface OcrOptions {
   margins?: boolean;
 }
 
-/** Parte da altura da página lida em cada margem, no modo `margins`. */
-const MARGIN_TOP = 0.09;
+/** Parte da altura da página lida em cada margem, no modo `margins` (em cima, cabe o cabeçalho com o número do processo). */
+const MARGIN_TOP = 0.14;
 const MARGIN_BOTTOM = 0.15;
 
 interface Viewport {
