@@ -78,7 +78,9 @@ describe("corte do PDF", () => {
   });
 
   it("não tenta refazer no navegador um PDF grande demais", async () => {
-    await expect(cutPdf(new Uint8Array(MAX_CUT_BYTES + 1), pageMap(2, new Set([1])))).rejects.toThrow(/grande demais/);
+    // só o tamanho importa aqui: não precisa alocar 400 MB no teste
+    const huge = { byteLength: MAX_CUT_BYTES + 1 } as Uint8Array;
+    await expect(cutPdf(huge, pageMap(2, new Set([1])))).rejects.toThrow(/mais de 400 MB/);
   });
 
   it("recusa quando o PDF não é o que foi lido", async () => {

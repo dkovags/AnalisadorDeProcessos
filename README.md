@@ -59,7 +59,9 @@ aplicativo e funciona sem internet.
 
   Na importação, os documentos de representação que as partes juntam (substabelecimentos, cartas de preposição e
   atos constitutivos, como contrato social, estatuto, atas e cartão do CNPJ) já vêm marcados para ficar de fora, e as
-  procurações podem sair também; as páginas deles são cortadas do PDF guardado, que fica menor. Na lista, dá para
+  procurações podem sair também; as páginas deles são cortadas do PDF guardado, que fica menor (o PDF é refeito no
+  próprio navegador, até 400 MB num computador e 150 MB no celular; acima disso, os documentos saem da lista e o
+  arquivo fica inteiro). Na lista, dá para
   marcar ou desmarcar qualquer documento. Num processo já importado, o botão **Cortar documentos**, na aba
   **Documentos**, faz o mesmo corte depois.
 
