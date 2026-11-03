@@ -1,11 +1,11 @@
-// Service worker do Analisador de Processos: deixa o app abrir sem internet.
+// Service worker do InteliJus: deixa o app abrir sem internet.
 // Página: rede primeiro, conferida no site a cada abertura (para receber atualizações); cópia salva se estiver offline.
 // Arquivos com hash no nome (JS, CSS, fontes, o leitor de PDF): cópia salva primeiro, pois nunca mudam.
 // Os dados (processos e arquivos) ficam no IndexedDB e não passam por aqui.
 const CACHE = "autos-v2";
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./manifest.webmanifest", "./icon.svg"])));
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./manifest.webmanifest", "./brand-logo.png", "./icon-32.png", "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"])));
   self.skipWaiting();
 });
 
@@ -32,7 +32,11 @@ self.addEventListener("fetch", (event) => {
         (hit) =>
           hit ||
           fetch(req).then((res) => {
-            if (res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
+            if (res.ok) {
+              // Clone antes de entregar a resposta à página, que já pode consumir o corpo.
+              const copy = res.clone();
+              event.waitUntil(caches.open(CACHE).then((c) => c.put(req, copy)));
+            }
             return res;
           }),
       ),
@@ -46,7 +50,7 @@ self.addEventListener("fetch", (event) => {
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req.mode === "navigate" ? "./" : req, copy));
+          event.waitUntil(caches.open(CACHE).then((c) => c.put(req.mode === "navigate" ? "./" : req, copy)));
         }
         return res;
       })

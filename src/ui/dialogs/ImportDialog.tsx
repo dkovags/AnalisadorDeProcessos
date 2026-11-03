@@ -80,9 +80,10 @@ function ocrLeft(o: { done: number; total: number; started: number }): string {
 
 /** Data do documento: a da assinatura eletrônica ou a última data do texto (sem datas futuras). */
 function guessDate(pages: string[], today: string): string {
-  const all = pages.join("\n");
-  const signed = all.match(/Assinado eletronicamente por:.*?(\d{2}\/\d{2}\/\d{4})/);
-  if (signed) return findDates(signed[1])[0]?.iso || "";
+  for (const page of pages) {
+    const signed = page.match(/Assinado eletronicamente por:.*?(\d{2}\/\d{2}\/\d{4})/);
+    if (signed) return findDates(signed[1])[0]?.iso || "";
+  }
   const dates = findDates(pages.slice(-2).join("\n").slice(-3000)).filter((d) => d.iso <= today);
   return dates.at(-1)?.iso || "";
 }
@@ -174,7 +175,12 @@ export function ImportDialog({
         const extracted = await s.get();
         const sha = s.file ? await sha256(s.file) : undefined;
         const dup = sha ? Object.values(ds.files).find((x) => x.sha === sha) : undefined;
-        const all = extracted.pages.join("\n");
+        // A análise usa só o começo; não junte o texto inteiro de milhares de páginas.
+        let all = "";
+        for (const page of extracted.pages) {
+          all += page.slice(0, 40000 - all.length) + "\n";
+          if (all.length >= 40000) break;
+        }
         const a = analyze(all.slice(0, 40000));
         const type: DocType = mode === "expediente" ? (a.kind === "citacao" ? "citacao" : a.docType === "outro" || a.docType === "peticao" ? "intimacao" : a.docType) : classifyText(all);
         const detected = a.caseNumber ? A.findCaseByNumber(ds, a.caseNumber)?.id : undefined;
@@ -230,8 +236,7 @@ export function ImportDialog({
   const ocrPass = async (it: ReadFile, targets: number[], margins: boolean, label: string, signal: AbortSignal): Promise<{ it: ReadFile; read: number }> => {
     if (!targets.length || signal.aborted) return { it, read: 0 };
     setOcr({ done: 0, total: targets.length, started: Date.now(), label });
-    const data = new Uint8Array(await it.file!.arrayBuffer());
-    const found = await ocrPdfPages(data, targets, loadPdfJs, { signal, margins, onPage: (_p, _t, done) => setOcr((o) => (o ? { ...o, done } : o)) });
+    const found = await ocrPdfPages(it.file!, targets, loadPdfJs, { signal, margins, onPage: (_p, _t, done) => setOcr((o) => (o ? { ...o, done } : o)) });
     if (!found.size) return { it, read: 0 };
     if (margins) {
       // só o carimbo: a página continua sem o texto inteiro (e pode ser lida inteira depois)
@@ -260,6 +265,10 @@ export function ImportDialog({
       const first = await ocrPass(it, ocrTargets(it, scope), scope === "margens", OCR_LABEL[scope], ctrl.signal);
       it = first.it;
       read = first.read;
+      // Preserve a primeira passagem mesmo se a leitura seguinte da capa falhar.
+      const firstRead = it;
+      setItems((list) => list.map((x, i) => (i === idx ? firstRead : x)));
+      if (read && mode === "processo" && idx === 0) parseItem(firstRead);
       let coverRead = 0;
       if (scope === "margens") {
         // a capa e o índice (as páginas antes do primeiro carimbo) são lidos inteiros: deles vêm o número, as

@@ -1,4 +1,5 @@
-import { extractBytes, type Extracted, type PdfJs } from "./extract";
+import { extractBytes, extractPdf, kindOf, type Extracted, type PdfJs } from "./extract";
+export { sha256 } from "./filehash";
 
 // Leitura de arquivos no navegador: o pdf.js (e o worker dele) só é baixado quando aparece o primeiro PDF.
 
@@ -21,15 +22,9 @@ export function loadPdfJs(): Promise<PdfJs> {
 }
 
 export async function readFileText(file: File, onProgress?: (done: number, total: number) => void): Promise<Extracted> {
+  if (kindOf(file.name, file.type) === "pdf") return extractPdf(file, await loadPdfJs(), onProgress);
   const data = new Uint8Array(await file.arrayBuffer());
   return extractBytes(data, file.name, file.type, loadPdfJs, onProgress);
-}
-
-/** SHA-256 do arquivo, para avisar quando ele já foi enviado. */
-export async function sha256(file: Blob): Promise<string | undefined> {
-  if (!crypto?.subtle) return undefined;
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Pede ao navegador para não apagar os dados quando faltar espaço. */

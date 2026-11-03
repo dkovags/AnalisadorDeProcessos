@@ -1,4 +1,5 @@
 import type { PdfJs } from "./extract";
+import { openPdf } from "./pdfsource";
 
 // Leitura do texto de páginas que são imagem (OCR), com o tesseract.js e o modelo do português. Os arquivos ficam no
 // próprio site (public/ocr, copiados de node_modules pelo scripts/copy-ocr.mjs) e só são baixados quando a pessoa pede
@@ -10,6 +11,9 @@ const OCR_DIR = "ocr/v7/";
 /** Quantas páginas são lidas ao mesmo tempo (cada leitura usa um núcleo e cerca de 100 MB de memória). */
 export function ocrWorkers(): number {
   const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 2 : 2;
+  const memory = typeof navigator !== "undefined" ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined;
+  // Um celular pode anunciar muitos núcleos, mas ter pouca memória para os modelos de OCR.
+  if (memory !== undefined && memory <= 4) return 1;
   return cores >= 8 ? 3 : cores >= 4 ? 2 : 1;
 }
 
@@ -71,9 +75,14 @@ function whiteCanvas(width: number, height: number): HTMLCanvasElement {
 /** Desenha a faixa da página que começa na altura `top` (em pixels da imagem) e tem `height` de altura. */
 async function drawBand(page: RenderablePage, viewport: Viewport, top: number, height: number): Promise<HTMLCanvasElement> {
   const canvas = whiteCanvas(viewport.width, height);
-  // "print": desenha sem esperar quadros da tela, então continua mesmo com a aba em segundo plano
-  await page.render({ canvas, viewport, intent: "print", transform: top ? [1, 0, 0, 1, 0, -top] : undefined }).promise;
-  return canvas;
+  try {
+    // "print": desenha sem esperar quadros da tela, então continua mesmo com a aba em segundo plano
+    await page.render({ canvas, viewport, intent: "print", transform: top ? [1, 0, 0, 1, 0, -top] : undefined }).promise;
+    return canvas;
+  } catch (e) {
+    canvas.width = canvas.height = 0;
+    throw e;
+  }
 }
 
 /** Desenha a página (ou só as margens de cima e de baixo, uma sobre a outra) e devolve a imagem (JPEG) para o OCR. */
@@ -82,14 +91,17 @@ async function renderPage(doc: RenderableDoc, n: number, width: number, margins:
   const canvases: HTMLCanvasElement[] = [];
   try {
     const base = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: Math.min(4, Math.max(1, width / base.width)) });
+    // PDFs com páginas de tamanho incomum também precisam caber no canvas do celular.
+    const scale = Math.min(4, width / base.width, Math.sqrt(8_000_000 / (base.width * base.height)), 8192 / Math.max(base.width, base.height));
+    const viewport = page.getViewport({ scale });
     let canvas: HTMLCanvasElement;
     if (!margins) canvas = await drawBand(page, viewport, 0, viewport.height);
     else {
       const top = Math.ceil(viewport.height * MARGIN_TOP);
       const bottom = Math.ceil(viewport.height * MARGIN_BOTTOM);
       const gap = 24;
-      canvases.push(await drawBand(page, viewport, 0, top), await drawBand(page, viewport, viewport.height - bottom, bottom));
+      canvases.push(await drawBand(page, viewport, 0, top));
+      canvases.push(await drawBand(page, viewport, viewport.height - bottom, bottom));
       canvas = whiteCanvas(viewport.width, top + gap + bottom);
       const ctx = canvas.getContext("2d");
       ctx?.drawImage(canvases[0], 0, 0);
@@ -116,50 +128,73 @@ export function cleanOcrText(text: string): string {
 }
 
 /**
- * Lê o texto das páginas indicadas (1 = primeira) de um PDF. Devolve o texto de cada página lida. Os bytes passam
- * para o pdf.js (sem cópia, porque o processo pode ter centenas de MB): quem chamou não deve usá-los depois.
+ * Lê as páginas indicadas (1 = primeira). Um Blob é aberto em blocos; se receber bytes, eles passam para o pdf.js
+ * e não devem ser usados de novo. Cada worker mantém somente uma página em processamento.
  */
-export async function ocrPdfPages(data: Uint8Array, pages: number[], loadPdf: () => Promise<PdfJs>, opts: OcrOptions = {}): Promise<Map<number, string>> {
+export async function ocrPdfPages(data: Uint8Array | Blob, pages: number[], loadPdf: () => Promise<PdfJs>, opts: OcrOptions = {}): Promise<Map<number, string>> {
   const out = new Map<number, string>();
-  if (!pages.length) return out;
-  const pdfjs = await loadPdf();
-  const task = pdfjs.getDocument({ data, isEvalSupported: false, verbosity: 0 });
-  const { createScheduler, createWorker } = await import("tesseract.js");
-  const base = new URL(OCR_DIR, document.baseURI).href;
-  const scheduler = createScheduler();
-  const stop = () => void scheduler.terminate().catch(() => {});
-  opts.signal?.addEventListener("abort", stop, { once: true });
+  if (!pages.length || opts.signal?.aborted) return out;
+  type Worker = Awaited<ReturnType<typeof import("tesseract.js")["createWorker"]>>;
+  const workers: Worker[] = [];
+  let task: ReturnType<typeof openPdf> | undefined;
+  let ended = false;
+  let interrupted = false;
+  const waiting = new Set<(reason: unknown) => void>();
+  const interrupt = () => {
+    interrupted = true;
+    for (const reject of waiting) reject(new DOMException("Leitura interrompida", "AbortError"));
+    waiting.clear();
+  };
+  const wait = <T>(promise: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+    if (interrupted) reject(new DOMException("Leitura interrompida", "AbortError"));
+    else waiting.add(reject);
+    (task ? task.guard(promise) : promise).then((value) => {
+      waiting.delete(reject);
+      resolve(value);
+    }, (error: unknown) => {
+      waiting.delete(reject);
+      reject(error);
+    });
+  });
+  opts.signal?.addEventListener("abort", interrupt, { once: true });
   try {
-    const doc = (await task.promise) as unknown as RenderableDoc;
-    const n = Math.max(1, Math.min(opts.workers ?? ocrWorkers(), pages.length));
-    const workers = await Promise.all(
-      Array.from({ length: n }, () => createWorker("por", 1, { workerPath: `${base}worker.min.js`, corePath: base, langPath: base, gzip: true, workerBlobURL: false })),
-    );
-    for (const w of workers) scheduler.addWorker(w);
+    const [pdfjs, { createWorker }] = await wait(Promise.all([loadPdf(), import("tesseract.js")]));
+    task = openPdf(data, pdfjs);
+    const doc = (await wait(task.promise)) as unknown as RenderableDoc;
+    const targets = [...new Set(pages)].filter((p) => Number.isInteger(p) && p >= 1 && p <= doc.numPages);
+    if (!targets.length) return out;
+    const base = new URL(OCR_DIR, document.baseURI).href;
+    const n = Math.max(1, Math.min(opts.workers ?? ocrWorkers(), targets.length));
+    await wait(Promise.all(Array.from({ length: n }, async () => {
+      const worker = await createWorker("por", 1, { workerPath: `${base}worker.min.js`, corePath: base, langPath: base, gzip: true, workerBlobURL: false });
+      // createWorker não oferece cancelamento antes de devolver o worker: encerre também quem terminar depois.
+      if (ended || opts.signal?.aborted) await worker.terminate().catch(() => {});
+      else workers.push(worker);
+    })));
+    let next = 0;
     let done = 0;
-    const pending: Promise<void>[] = [];
-    for (const p of pages) {
-      if (opts.signal?.aborted) break;
-      if (p < 1 || p > doc.numPages) continue;
-      const image = await renderPage(doc, p, opts.width ?? (opts.margins ? 2000 : 1700), !!opts.margins);
-      pending.push(
-        scheduler.addJob("recognize", image).then((r) => {
-          const text = cleanOcrText(r.data.text || "");
-          out.set(p, text);
-          opts.onPage?.(p, text, ++done, pages.length);
-        }),
-      );
-      // no máximo duas páginas esperando por leitor: a memória não cresce com o tamanho do processo
-      while (pending.length >= n * 2) await pending.shift();
-    }
-    await Promise.all(pending);
+    await Promise.all(workers.map(async (worker) => {
+      while (!ended && !opts.signal?.aborted && next < targets.length) {
+        const p = targets[next++];
+        const image = await wait(renderPage(doc, p, opts.width ?? (opts.margins ? 2000 : 1700), !!opts.margins));
+        if (ended || opts.signal?.aborted) return;
+        // terminate() não resolve os jobs do tesseract: a corrida libera a espera ao interromper.
+        const result = await wait(worker.recognize(image));
+        if (ended || opts.signal?.aborted) return;
+        const text = cleanOcrText(result.data.text || "");
+        out.set(p, text);
+        opts.onPage?.(p, text, ++done, targets.length);
+      }
+    }));
   } catch (e) {
-    // interrompido pela pessoa: fica o que já foi lido
+    // Interrompido pela pessoa: fica o que já foi lido.
     if (!opts.signal?.aborted) throw e;
   } finally {
-    opts.signal?.removeEventListener("abort", stop);
-    await scheduler.terminate().catch(() => {});
-    await task.destroy();
+    ended = true;
+    interrupt();
+    opts.signal?.removeEventListener("abort", interrupt);
+    await Promise.all(workers.map((worker) => worker.terminate().catch(() => {})));
+    await task?.destroy();
   }
   return out;
 }

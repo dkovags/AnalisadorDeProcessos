@@ -3,7 +3,7 @@ import { APP_NAME } from "./config";
 import { openDb, IdbPersistence } from "./store/idb";
 import { MemoryPersistence } from "./store/persistence";
 import { AppStore } from "./store/store";
-import { ConfirmDialog, Logo } from "./ui/components/basics";
+import { BrandLogo, ConfirmDialog } from "./ui/components/basics";
 import { Shell } from "./ui/components/Shell";
 import { useDjenAutoSync } from "./ui/cnjsync";
 import { StoreProvider, UIContext, useDatasetOrNull, useStatus, useStore, useToday, useUI, type Dialog, type Toast, type UI } from "./ui/context";
@@ -179,8 +179,7 @@ function Pages() {
 function Splash({ error }: { error?: string }) {
   return (
     <div className="splash">
-      <Logo size={64} />
-      <div className="splash-name">{APP_NAME}</div>
+      <BrandLogo />
       {error ? <p className="field-error">Não foi possível abrir os dados: {error}</p> : <div className="spinner" />}
     </div>
   );

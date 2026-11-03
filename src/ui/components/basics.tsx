@@ -6,18 +6,14 @@ import { STATUS } from "../../domain/labels";
 import type { Segment } from "../../domain/search";
 import type { CaseStatus } from "../../domain/types";
 import { useUI } from "../context";
+import { APP_NAME } from "../../config";
 
 export function Logo({ size = 28 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-      <rect x="2" y="2" width="60" height="60" rx="15" fill="var(--logo-bg)" />
-      <path d="M20 14h17l9 9v27a3 3 0 0 1-3 3H20a3 3 0 0 1-3-3V17a3 3 0 0 1 3-3z" fill="#fff" />
-      <path d="M37 14v9h9" fill="none" stroke="var(--logo-bg)" strokeWidth="2.5" strokeLinejoin="round" />
-      <rect x="23" y="29" width="17" height="3" rx="1.5" fill="var(--logo-bg)" />
-      <rect x="23" y="36" width="12" height="3" rx="1.5" fill="var(--logo-bg)" />
-      <circle cx="40" cy="44" r="6" fill="var(--accent)" />
-    </svg>
-  );
+  return <img className="app-logo" src="./icon-192.png" width={size} height={size} alt="" aria-hidden="true" />;
+}
+
+export function BrandLogo() {
+  return <img className="brand-logo" src="./brand-logo.png" width={2172} height={724} alt={`${APP_NAME} — Análise de Processos`} />;
 }
 
 export function Modal({

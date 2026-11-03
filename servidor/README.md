@@ -37,7 +37,7 @@ alerta de gasto (passo 6) avisa se algo mudar.
 
 Depois, em **Configurações** do aplicativo, na parte **Busca automática no DJEN e no DataJud**, preencha o endereço, a
 senha, o número da OAB e a UF, toque em **Testar a conexão** e, se der certo, em **Buscar intimações agora**. Para a
-busca acontecer sozinha, marque **Buscar as intimações novas ao abrir o Analisador de Processos**.
+busca acontecer sozinha, marque **Buscar as intimações novas ao abrir o InteliJus**.
 
 ## Trocar a senha
 

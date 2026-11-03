@@ -1,4 +1,4 @@
-// Teste de ponta a ponta do Analisador de Processos: usa o app como uma pessoa usaria e salva capturas de tela.
+// Teste de ponta a ponta do InteliJus: usa o app como uma pessoa usaria e salva capturas de tela.
 // Uso: npm run test:e2e  (gera screenshots/ e falha se algo der errado)
 // Para usar um Chromium já instalado, informe o caminho em CHROMIUM_PATH.
 import { chromium } from "playwright";
@@ -232,7 +232,7 @@ try {
   const page = await ctx.newPage();
   watch(page);
   await page.goto(URL);
-  await page.getByText("Boas-vindas ao Analisador de Processos").waitFor();
+  await page.getByText("Boas-vindas ao InteliJus").waitFor();
   await shot(page, "01-boas-vindas");
 
   // exemplo: dois processos fictícios com prazos, documentos e súmulas
@@ -627,7 +627,7 @@ try {
   await page.getByRole("button", { name: /Apagar todos os dados/ }).click();
   await page.getByRole("button", { name: "Apagar tudo", exact: true }).click();
   await page.goto(URL + "#/");
-  await page.getByText("Boas-vindas ao Analisador de Processos").waitFor();
+  await page.getByText("Boas-vindas ao InteliJus").waitFor();
   await page.goto(URL + "#/configuracoes");
   await page.locator("input[type=file][accept*=zip]").setInputFiles(await zip.path());
   await page.getByRole("button", { name: "Restaurar", exact: true }).click();
@@ -815,7 +815,7 @@ try {
   expect(overflow <= 0, `a página rola para o lado no celular (${overflow}px)`);
 
   if (errors.length) throw new Error("Erros no navegador:\n" + errors.join("\n"));
-  console.log(`ok: teste de ponta a ponta do Analisador de Processos passou (capturas em ${OUT}/)`);
+  console.log(`ok: teste de ponta a ponta do InteliJus passou (capturas em ${OUT}/)`);
 } catch (e) {
   console.error(e);
   if (errors.length) console.error(errors.join("\n"));

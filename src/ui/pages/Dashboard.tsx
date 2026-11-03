@@ -6,7 +6,7 @@ import { caseLabel } from "../../domain/select";
 import type { Dataset } from "../../domain/types";
 import { loadExample } from "../../store/example";
 import { AgendaList, useAgenda } from "../components/Agenda";
-import { Empty, Logo } from "../components/basics";
+import { BrandLogo, Empty } from "../components/basics";
 import { PageHeader } from "../components/Shell";
 import { useData, useStore, useToday, useUI } from "../context";
 import { casePath, href, navigate } from "../router";
@@ -25,7 +25,7 @@ function Welcome() {
   return (
     <div className="welcome">
       <div className="welcome-hero">
-        <Logo size={56} />
+        <BrandLogo />
         <div>
           <h2>Boas-vindas ao {APP_NAME}</h2>
           <p>

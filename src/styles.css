@@ -1,4 +1,4 @@
-/* Analisador de Processos – estilos (tema claro e escuro) */
+/* InteliJus – estilos (tema claro e escuro) */
 :root {
   --bg: #f3f5f8;
   --surface: #ffffff;
@@ -332,10 +332,23 @@ input[type="radio"] {
   letter-spacing: -0.01em;
 }
 
-/* nome longo: quebra em duas linhas equilibradas ("Analisador / de Processos") */
+/* Equilibra a quebra de linha do nome em espaços estreitos. */
 .brand span {
   line-height: 1.1;
   text-wrap: balance;
+}
+
+.app-logo {
+  display: block;
+  flex: none;
+  border-radius: 20%;
+}
+
+.brand-logo {
+  display: block;
+  width: min(100%, 440px);
+  height: auto;
+  border-radius: var(--radius);
 }
 
 .nav-link {
@@ -931,6 +944,7 @@ input[type="radio"] {
 
 .welcome-hero {
   display: flex;
+  flex-direction: column;
   gap: 18px;
   align-items: flex-start;
   padding: 22px;
@@ -2516,12 +2530,6 @@ svg.spin {
   min-height: 100vh;
   padding: 20px;
   text-align: center;
-}
-
-.splash-name {
-  font-size: 26px;
-  font-weight: 900;
-  text-wrap: balance;
 }
 
 /* ---------- avisos ---------- */

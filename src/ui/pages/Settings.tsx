@@ -254,7 +254,7 @@ export function SettingsPage() {
     try {
       await store.flush();
       const zip = await makeBackup({ ds, blob: (id) => store.blob(id), pages: (id) => store.pages(id) }, __APP_VERSION__);
-      downloadFile(`analisador-de-processos-copia-${today}.zip`, zip, "application/zip");
+      downloadFile(`intelijus-copia-${today}.zip`, zip, "application/zip");
       ui.toast("Cópia de segurança baixada. Guarde-a num lugar seguro (pendrive, nuvem pessoal).");
     } catch (e) {
       ui.toast(`Não foi possível gerar a cópia: ${(e as Error).message}`, { kind: "error" });

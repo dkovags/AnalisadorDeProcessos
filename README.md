@@ -1,4 +1,4 @@
-# Analisador de Processos
+# InteliJus
 
 Controle de processos judiciais para um escritório ou um advogado: a situação de cada processo, os expedientes
 dirigidos a cada parte, os prazos e as petições que precisam ser protocoladas, com a lista de documentos para
@@ -31,7 +31,7 @@ aplicativo e funciona sem internet.
   art. 775-A; CPP, art. 798-A) e os feriados locais e suspensões que você cadastrar para cada tribunal. Cada prazo
   mostra o passo a passo do cálculo, que dá para copiar. Há também uma calculadora avulsa.
 - **Petições a protocolar e documentos para instruí-las**: ao colar a intimação (ou a decisão, o despacho, o ato
-  ordinatório), o Analisador de Processos lê o ato a praticar (réplica, contestação, emenda, contrarrazões, manifestação sobre laudo,
+  ordinatório), o InteliJus lê o ato a praticar (réplica, contestação, emenda, contrarrazões, manifestação sobre laudo,
   especificação de provas, recolhimento de custas, pagamento no cumprimento de sentença, recurso cabível contra a
   sentença ou o acórdão conforme o rito...), o prazo escrito ou o legal, a quem a ordem se dirige, a audiência marcada e
   os documentos pedidos ("junte comprovante de residência e cópia do contrato"). Com isso, cria a providência com o
@@ -50,7 +50,7 @@ aplicativo e funciona sem internet.
     códigos como "PED LIMINAR_ANT TUTE1"), ou, sem ele, pelos marcadores (índice) do PDF. O nome de cada documento vem
     dos marcadores ("Evento 1 - Doc. 2 - PROCURAÇÃO"); as datas e as descrições dos eventos, das páginas de separação
     (ou da tabela de eventos da capa), e as páginas de separação ficam fora dos documentos. Do quadro "Partes e
-    Representantes", o Analisador de Processos tira o polo de cada parte pela coluna em que ela aparece, os procuradores
+    Representantes", o InteliJus tira o polo de cada parte pela coluna em que ela aparece, os procuradores
     (com a OAB ou o código da procuradoria) e o tipo de pessoa: o ente público já entra com o prazo em dobro. Cada
     documento fica com a referência "Evento 15, CONTES1", do jeito que se cita nos autos, e as movimentações entram
     nos andamentos;
@@ -72,7 +72,7 @@ aplicativo e funciona sem internet.
   pesquisa ignora acentos e maiúsculas, procura as palavras pelo começo, aceita "frase exata" e -exclusão, ordena por
   relevância e abre o documento na página, com os termos destacados e o botão para abrir o PDF original naquela página.
 - **Jurisprudência com as partes identificadas**: ao colar o cabeçalho e a ementa de um acórdão (ou o resultado da
-  pesquisa do STJ, do STF ou de repositórios), o Analisador de Processos lê o tribunal, a classe, o número, o relator ou a relatora, o
+  pesquisa do STJ, do STF ou de repositórios), o InteliJus lê o tribunal, a classe, o número, o relator ou a relatora, o
   órgão julgador, as datas, a ementa, o tema e as partes com os seus papéis (recorrente, agravado, impetrante,
   apelante...) e advogados. A base mostra os processos seus que têm parte em comum com cada decisão, separa os
   precedentes qualificados (CPC, art. 927) e marca as decisões já conferidas na fonte oficial. O inteiro teor pode ser
@@ -90,11 +90,10 @@ aplicativo e funciona sem internet.
   palavras acrescentadas e suprimidas destacadas (as supressões marcadas com [...] são aceitas). Para cada citação,
   mostra a referência adequada da base ou os *links* para conferir no *site* do tribunal.
 - **Avisos e agenda**: o painel mostra os prazos vencidos, os de hoje e os próximos, as audiências e quantas petições
-  ainda não têm todos os documentos; o navegador avisa dos prazos do dia quando o Analisador de Processos é aberto; o ícone do aplicativo
+  ainda não têm todos os documentos; o navegador avisa dos prazos do dia quando o InteliJus é aberto; o ícone do aplicativo
   instalado mostra quantos prazos venceram ou vencem hoje; e os prazos e audiências podem ser exportados para o Google
   Agenda, o Outlook ou o calendário do celular (arquivo .ics, com lembrete).
-- **Busca automática no DJEN e no DataJud**: com o intermediário no Brasil configurado (veja abaixo), o Analisador de
-  Processos busca as comunicações publicadas para a sua OAB no Diário de Justiça Eletrônico Nacional, sozinho ao abrir
+- **Busca automática no DJEN e no DataJud**: com o intermediário no Brasil configurado (veja abaixo), o InteliJus busca as comunicações publicadas para a sua OAB no Diário de Justiça Eletrônico Nacional, sozinho ao abrir
   (uma vez por dia) ou pelo botão em **Configurações**. Cada intimação vira um expediente com o meio DJEN e a data da
   disponibilização, o ato, o prazo e as providências lidos do texto, marcado para você conferir; o processo que não
   estava na base é cadastrado com as partes da comunicação, e a lista de distribuição entra nos andamentos. Não repete
@@ -102,7 +101,7 @@ aplicativo e funciona sem internet.
   as movimentações do processo registradas pelo tribunal no DataJud.
 - **Instâncias e consulta pública**: quando o processo sobe para a turma recursal (ou para a câmara, a turma do
   tribunal, a uniformização ou um tribunal superior), a comunicação do DJEN ou o registro do DataJud mostra o novo
-  órgão: o Analisador de Processos anota a subida nos andamentos, passa a situação para "Em grau de recurso" e mostra
+  órgão: o InteliJus anota a subida nos andamentos, passa a situação para "Em grau de recurso" e mostra
   no alto do processo onde os autos estão agora; quando eles voltam à origem, anota a volta. Cada instância guarda o
   link da consulta pública dela (cada sistema e cada grau tem o seu), e o processo avisa quando a instância atual ainda
   não tem link. O recurso que ganha número próprio (agravo de instrumento, recurso de medida cautelar na turma
@@ -135,7 +134,7 @@ processos. O endereço e a senha do intermediário ficam nas configurações e v
 - **No dia a dia**: baixe o processo inteiro no sistema do tribunal (no PJe, o *download* dos autos; no eproc, o
   processo completo em PDF) e importe em **Processos > Importar PDF do processo**; confira a capa, as partes e os
   documentos encontrados e escolha quem é o seu cliente. A cada intimação, abra o processo, toque em **Colar
-  intimação** e confira o que o Analisador de Processos preencheu; acompanhe o painel e a agenda de prazos e marque cada providência como
+  intimação** e confira o que o InteliJus preencheu; acompanhe o painel e a agenda de prazos e marque cada providência como
   protocolada.
 - **Busca no DJEN**: crie o intermediário seguindo o [guia](servidor/README.md) (uns 15 minutos, na conta da AWS) e
   preencha o endereço, a senha e a OAB em **Configurações**. As intimações encontradas aparecem no painel em
@@ -174,7 +173,7 @@ npm run test:e2e         # teste completo no navegador (gera capturas em screens
 O teste de ponta a ponta monta PDFs nos formatos do PJe e do eproc (dois modelos de capa, um deles o do TJRJ) e um com
 marcadores, importa cada um pela tela e passa por todas as funções, inclusive a busca no DJEN e no DataJud, com um
 intermediário simulado e dados fictícios. Para usar um Chromium já instalado nele e na geração dos ícones
-(`node scripts/make-icons.mjs public "#24406b"`), informe o caminho em `CHROMIUM_PATH`.
+(`node scripts/make-icons.mjs`), informe o caminho em `CHROMIUM_PATH`.
 
 Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/manifest.webmanifest`.
 
@@ -189,7 +188,7 @@ Para trocar o nome do aplicativo, edite `src/config.ts`, `index.html` e `public/
   tribunais. A capa pode variar entre os tribunais que usam o eproc; se algo não for reconhecido, o processo inteiro
   fica guardado como um documento só, pesquisável do mesmo jeito, e as partes podem ser completadas à mão. Quando o
   eproc divide o *download* em partes ("Parte 1", "Parte 2"...), importe cada parte no mesmo processo.
-- Páginas sem texto (imagem digitalizada, processo impresso para PDF): o Analisador de Processos lê o texto das imagens
+- Páginas sem texto (imagem digitalizada, processo impresso para PDF): o InteliJus lê o texto das imagens
   (OCR) no próprio aparelho, sem mandar o arquivo para a internet, e a leitura pode ter erros: confira o número, as
   partes e os documentos encontrados.
   - Se a primeira página é imagem, a capa (as quatro primeiras páginas) é lida assim que o arquivo abre: dela saem o
@@ -244,5 +243,5 @@ servidor/                  intermediário no Brasil (AWS Lambda) e o passo a pas
 public/                    ícones, manifesto e service worker (funciona sem internet)
 tests/                     testes da lógica (Vitest)
 scripts/e2e.mjs            teste de ponta a ponta no navegador (Playwright)
-scripts/make-icons.mjs     geração dos ícones a partir de public/icon.svg
+scripts/make-icons.mjs     geração dos ícones a partir de public/brand-icon.png
 ```

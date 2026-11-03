@@ -1,4 +1,5 @@
 import { unzipSync, strFromU8 } from "fflate";
+import { openPdf } from "./pdfsource";
 
 // Texto de arquivos: PDF (pdf.js), Word (.docx), LibreOffice (.odt), HTML e texto simples.
 // Funciona no navegador e no Node (testes); o pdf.js é passado de fora, porque cada ambiente carrega o seu.
@@ -137,7 +138,7 @@ interface OutlineNode {
   items?: OutlineNode[];
 }
 
-interface PdfDoc {
+export interface PdfDoc {
   numPages: number;
   getPage(n: number): Promise<{ getTextContent(): Promise<{ items: unknown[] }>; cleanup(): void }>;
   getOutline(): Promise<OutlineNode[] | null>;
@@ -146,7 +147,12 @@ interface PdfDoc {
 }
 
 export type PdfJs = {
-  getDocument(src: { data: Uint8Array; isEvalSupported?: boolean; verbosity?: number }): {
+  PDFDataRangeTransport: new (length: number, initialData: Uint8Array | null, progressiveDone?: boolean) => {
+    requestDataRange(begin: number, end: number): void;
+    onDataRange(begin: number, chunk: Uint8Array): void;
+    abort(): void;
+  };
+  getDocument(src: { data?: Uint8Array; range?: InstanceType<PdfJs["PDFDataRangeTransport"]>; rangeChunkSize?: number; disableStream?: boolean; disableAutoFetch?: boolean; isEvalSupported?: boolean; verbosity?: number }): {
     promise: Promise<PdfDoc>;
     destroy(): Promise<void>;
   };
@@ -180,25 +186,28 @@ async function readOutline(doc: PdfDoc): Promise<OutlineItem[]> {
   return out;
 }
 
-export async function extractPdf(data: Uint8Array, pdfjs: PdfJs, onProgress?: (done: number, total: number) => void): Promise<Extracted> {
+export async function extractPdf(data: Uint8Array | Blob, pdfjs: PdfJs, onProgress?: (done: number, total: number) => void): Promise<Extracted> {
   // verbosity 0: só erros no console (avisos sobre fontes não importam para ler o texto)
-  const task = pdfjs.getDocument({ data, isEvalSupported: false, verbosity: 0 });
-  const doc = await task.promise;
+  const task = openPdf(data, pdfjs);
   const pages: string[] = [];
   const empty: number[] = [];
   const layout: TextSegment[][] = [];
   try {
+    const doc = await task.promise;
     for (let n = 1; n <= doc.numPages; n++) {
-      const page = await doc.getPage(n);
-      const tc = await page.getTextContent();
-      const text = itemsToText(tc.items);
-      if (n <= LAYOUT_PAGES) layout.push(itemsToSegments(tc.items));
-      pages.push(text);
-      if (text.replace(/\s/g, "").length < 15) empty.push(n);
-      page.cleanup();
+      const page = await task.guard(doc.getPage(n));
+      try {
+        const tc = await task.guard(page.getTextContent());
+        const text = itemsToText(tc.items);
+        if (n <= LAYOUT_PAGES) layout.push(itemsToSegments(tc.items));
+        pages.push(text);
+        if (text.replace(/\s/g, "").length < 15) empty.push(n);
+      } finally {
+        page.cleanup();
+      }
       onProgress?.(n, doc.numPages);
     }
-    const outline = await readOutline(doc);
+    const outline = await task.guard(readOutline(doc));
     return { pages, empty, kind: "pdf", outline: outline.length ? outline : undefined, layout };
   } finally {
     await task.destroy();
