@@ -118,6 +118,14 @@ describe("OCR em arquivos grandes", () => {
     expect(task.destroy).toHaveBeenCalledOnce();
   });
 
+  it("lê a faixa de cima e a de baixo separadamente (juntas, o título em negrito do alto se perdia)", async () => {
+    const { worker, loadPdf } = fixture();
+    worker.recognize.mockResolvedValueOnce(result("SUBSTABELECIMENTO")).mockResolvedValueOnce(result("ID. a1b2c3d - Pág. 1"));
+    const out = await ocrPdfPages(new Blob(["pdf"]), [3], loadPdf, { margins: true, workers: 1 });
+    expect(worker.recognize).toHaveBeenCalledTimes(2);
+    expect(out.get(3)).toBe("SUBSTABELECIMENTO\nID. a1b2c3d - Pág. 1");
+  });
+
   it("libera as duas faixas da página se o desenho da segunda falhar", async () => {
     const { page, canvases, task, loadPdf } = fixture();
     page.render.mockImplementationOnce(() => ({ promise: Promise.resolve() })).mockImplementationOnce(() => ({ promise: Promise.reject(new Error("imagem inválida")) }));

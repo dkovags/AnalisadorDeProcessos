@@ -13,7 +13,7 @@ export function Logo({ size = 28 }: { size?: number }) {
 }
 
 export function BrandLogo() {
-  return <img className="brand-logo" src="./brand-logo.png" width={2172} height={724} alt={`${APP_NAME} — Análise de Processos`} />;
+  return <img className="brand-logo" src="./brand-logo.png" width={2172} height={724} alt={`${APP_NAME} – Análise de Processos`} />;
 }
 
 export function Modal({

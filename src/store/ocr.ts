@@ -85,8 +85,17 @@ async function drawBand(page: RenderablePage, viewport: Viewport, top: number, h
   }
 }
 
-/** Desenha a página (ou só as margens de cima e de baixo, uma sobre a outra) e devolve a imagem (JPEG) para o OCR. */
-async function renderPage(doc: RenderableDoc, n: number, width: number, margins: boolean): Promise<Blob> {
+function toJpeg(canvas: HTMLCanvasElement, n: number): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(`Não foi possível desenhar a página ${n}.`))), "image/jpeg", 0.92),
+  );
+}
+
+/**
+ * Desenha a página (ou só as faixas de cima e de baixo) e devolve as imagens (JPEG) para o OCR. As faixas são lidas
+ * separadamente: juntas numa imagem só, o OCR deixava de fora o título em negrito do alto da página.
+ */
+async function renderPage(doc: RenderableDoc, n: number, width: number, margins: boolean): Promise<Blob[]> {
   const page = await doc.getPage(n);
   const canvases: HTMLCanvasElement[] = [];
   try {
@@ -94,23 +103,16 @@ async function renderPage(doc: RenderableDoc, n: number, width: number, margins:
     // PDFs com páginas de tamanho incomum também precisam caber no canvas do celular.
     const scale = Math.min(4, width / base.width, Math.sqrt(8_000_000 / (base.width * base.height)), 8192 / Math.max(base.width, base.height));
     const viewport = page.getViewport({ scale });
-    let canvas: HTMLCanvasElement;
-    if (!margins) canvas = await drawBand(page, viewport, 0, viewport.height);
+    if (!margins) canvases.push(await drawBand(page, viewport, 0, viewport.height));
     else {
       const top = Math.ceil(viewport.height * MARGIN_TOP);
       const bottom = Math.ceil(viewport.height * MARGIN_BOTTOM);
-      const gap = 24;
       canvases.push(await drawBand(page, viewport, 0, top));
       canvases.push(await drawBand(page, viewport, viewport.height - bottom, bottom));
-      canvas = whiteCanvas(viewport.width, top + gap + bottom);
-      const ctx = canvas.getContext("2d");
-      ctx?.drawImage(canvases[0], 0, 0);
-      ctx?.drawImage(canvases[1], 0, top + gap);
     }
-    canvases.push(canvas);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
-    if (!blob) throw new Error(`Não foi possível desenhar a página ${n}.`);
-    return blob;
+    const images: Blob[] = [];
+    for (const c of canvases) images.push(await toJpeg(c, n));
+    return images;
   } finally {
     for (const c of canvases) c.width = c.height = 0;
     page.cleanup();
@@ -176,12 +178,16 @@ export async function ocrPdfPages(data: Uint8Array | Blob, pages: number[], load
     await Promise.all(workers.map(async (worker) => {
       while (!ended && !opts.signal?.aborted && next < targets.length) {
         const p = targets[next++];
-        const image = await wait(renderPage(doc, p, opts.width ?? (opts.margins ? 2000 : 1700), !!opts.margins));
+        const images = await wait(renderPage(doc, p, opts.width ?? (opts.margins ? 2000 : 1700), !!opts.margins));
         if (ended || opts.signal?.aborted) return;
-        // terminate() não resolve os jobs do tesseract: a corrida libera a espera ao interromper.
-        const result = await wait(worker.recognize(image));
-        if (ended || opts.signal?.aborted) return;
-        const text = cleanOcrText(result.data.text || "");
+        const parts: string[] = [];
+        for (const image of images) {
+          // terminate() não resolve os jobs do tesseract: a corrida libera a espera ao interromper.
+          const result = await wait(worker.recognize(image));
+          if (ended || opts.signal?.aborted) return;
+          parts.push(cleanOcrText(result.data.text || ""));
+        }
+        const text = parts.filter(Boolean).join("\n");
         out.set(p, text);
         opts.onPage?.(p, text, ++done, targets.length);
       }
