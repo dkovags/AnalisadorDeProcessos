@@ -308,7 +308,8 @@ e4f5a6b 10/02/2025 09:00 Substabelecimento Substabelecimento
       "Documentos do processo (cópia)",
       "RECLAMAÇÃO TRABALHISTA\nID. a1b2c3d - Pág. 1",
       "SUBSTABELECIMENTO\nID. e4f5a6b - Pág. 1",
-      "CARTA DE PREPOSIÇÃO\nID. 7f6e5d4 - Pág. 1",
+      // o texto da carta fala em intimação e audiência: mesmo assim, ela é de representação
+      "CARTA DE PREPOSIÇÃO\nCredencia o preposto para a audiência, ciente da intimação.\nID. 7f6e5d4 - Pág. 1",
       "CONTESTAÇÃO\nID. 9c8d7e6 - Pág. 1",
     ]);
     expect(info.docs.slice(1).map((d) => [d.title, d.type, representationOf(d) || ""])).toEqual([

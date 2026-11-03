@@ -335,7 +335,17 @@ function parsePje(pages: string[], info: CaseFileInfo) {
       const heading = entry ? undefined : headingTitle(text);
       const typeFromIndex = entry?.typeLabel ? docTypeFromLabel(entry.typeLabel) : heading ? docTypeFromLabel(heading) : undefined;
       const classified = classifyText(text);
-      const type = typeFromIndex && typeFromIndex !== "peticao" ? typeFromIndex : classified !== "outro" ? classified : typeFromIndex || "outro";
+      // nome de documento de representação sem tipo próprio ("Carta de Preposição", "Estatuto Social"): fica "outro",
+      // e não o tipo que o texto sugere (uma carta de preposição pode falar em intimação ou em audiência)
+      const named = entry?.title || heading || "";
+      const representation = !typeFromIndex && !!named && isRepresentationTitle(`${named} ${entry?.typeLabel || ""}`);
+      const type = representation
+        ? "outro"
+        : typeFromIndex && typeFromIndex !== "peticao"
+          ? typeFromIndex
+          : classified !== "outro"
+            ? classified
+            : typeFromIndex || "outro";
       current = {
         courtId: id,
         title: entry?.title || heading || DOC_TYPES[type],
