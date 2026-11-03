@@ -152,7 +152,24 @@ function field(lines: string[], label: RegExp): string | undefined {
 // "Num. 12345678 - Pág. 1" (PJe dos tribunais de justiça e federais) ou "ID. a1b2c3d - Pág. 1" (PJe da Justiça do
 // Trabalho, com um código de 7 letras e algarismos). Tolera as trocas comuns da leitura de imagens (OCR): "Num," por
 // "Num.", "lD" por "ID", travessão por hífen, "Pag" sem acento.
-const PJE_STAMP = /(?:Num|[I1l]D)[.,:]?\s*(\d{4,14}|[0-9a-z]{7})\s*[-–—]\s*P[áa]g[.,:]?\s*(\d+)/i;
+// O código pode vir com trocas da leitura de imagens ("1a615€4", "1a4fí7d"): é aceito como veio e normalizado em pjeId.
+const PJE_STAMP = /(?:Num|[I1l]D)[.,:]?\s*([^\s\-–—]{4,16})\s*[-–—~]?\s*P[áàãâa]g[.,:]?\s*(\d+)/i;
+
+// letras e sinais que a leitura de imagens põe no lugar de algarismos (e o "€" no lugar do "e")
+const ID_FIX: Record<string, string> = { "€": "e", "|": "1", "!": "1", i: "1", l: "1", o: "0", s: "5", q: "9", g: "9", z: "2" };
+
+/**
+ * Código do documento no PJe sem as trocas comuns da leitura de imagens (acentos, letras parecidas com algarismos),
+ * aplicado igual no carimbo e no índice: o mesmo código lido de jeitos diferentes continua o mesmo documento.
+ */
+export function pjeId(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[€|!ilosqgz]/g, (ch) => ID_FIX[ch] ?? ch)
+    .replace(/[^0-9a-z]/g, "");
+}
 const PJE_SIGNED = /Assinado eletronicamente por:\s*(.+?)\s*-\s*(\d{2}\/\d{2}\/\d{4})/;
 // o código do e-SAJ tem algum algarismo (não confundir com o "código verificador" do eproc)
 const ESAJ_CODE = /c[óo]digo\s+(?=[0-9A-Za-z]*\d)([0-9A-Za-z]{6,})/;
@@ -257,12 +274,12 @@ function parsePjeIndex(pages: string[]): Map<string, IndexEntry> {
   for (const p of pages) {
     if (PJE_STAMP.test(p) && out.size) break;
     for (const line of p.split("\n")) {
-      // o código da Justiça do Trabalho tem 7 letras e algarismos, com pelo menos um algarismo
-      const m = line.trim().match(/^(\d{5,14}|(?=[a-z]*\d)[0-9a-z]{7})\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\s+(.+)$/i);
-      if (!m) continue;
+      // código numérico ou, na Justiça do Trabalho, de 7 letras e algarismos (com algarismos, para não pegar palavras)
+      const m = line.trim().match(/^(\S{5,16})\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\s+(.+)$/i);
+      if (!m || (m[1].match(/\d/g) || []).length < 2) continue;
       const date = findDates(m[2])[0]?.iso;
       if (!date) continue;
-      const id = m[1].toLowerCase();
+      const id = pjeId(m[1]);
       out.set(id, { id, date, ...splitNameType(m[3]) });
     }
   }
@@ -314,6 +331,7 @@ function parsePje(pages: string[], info: CaseFileInfo) {
   let currentId = "";
   let lastPag = 0;
   let coverEnd = 0;
+  const stamped = new Set<number>();
   pages.forEach((text, i) => {
     const page = i + 1;
     const m = text.match(PJE_STAMP);
@@ -322,19 +340,28 @@ function parsePje(pages: string[], info: CaseFileInfo) {
       else coverEnd = page;
       return;
     }
-    const id = m[1].toLowerCase();
+    stamped.add(page);
+    const id = pjeId(m[1]);
     const pag = Number(m[2]);
     // página seguinte do mesmo documento, com o código lido com um erro: não é documento novo
     const misread = !!current && id !== currentId && pag === lastPag + 1 && pag > 1 && nearlySame(id, currentId);
     lastPag = pag;
     if ((id !== currentId && !misread) || !current) {
       currentId = id;
+      // o documento começa no meio ("Pág. 3"): as páginas sem carimbo legível logo antes desta, que ficaram no
+      // documento anterior, são as primeiras deste (até duas, no exemplo)
+      let start = page;
+      if (current && pag > 1) {
+        while (start - 1 > current.pages[0] && page - (start - 1) < pag && !stamped.has(start - 1)) start--;
+        if (start < page) current.pages[1] = start - 1;
+      }
+      const first = pages[start - 1];
       const entry = index.get(id) || nearEntry(index, id);
       const signed = text.match(PJE_SIGNED);
-      // sem o índice (capa que não veio ou não foi lida), o título que está no alto da página
-      const heading = entry ? undefined : headingTitle(text);
+      // sem o índice (capa que não veio ou não foi lida), o título que está no alto da primeira página
+      const heading = entry ? undefined : headingTitle(first) || headingTitle(text);
       const typeFromIndex = entry?.typeLabel ? docTypeFromLabel(entry.typeLabel) : heading ? docTypeFromLabel(heading) : undefined;
-      const classified = classifyText(text);
+      const classified = classifyText(first);
       // nome de documento de representação sem tipo próprio ("Carta de Preposição", "Estatuto Social"): fica "outro",
       // e não o tipo que o texto sugere (uma carta de preposição pode falar em intimação ou em audiência)
       const named = entry?.title || heading || "";
@@ -353,7 +380,7 @@ function parsePje(pages: string[], info: CaseFileInfo) {
         type,
         date: entry?.date || (signed ? findDates(signed[2])[0]?.iso : undefined),
         signer: signed ? titleCase(signed[1]) : undefined,
-        pages: [page, page],
+        pages: [start, page],
       };
       info.docs.push(current);
     } else current.pages[1] = page;

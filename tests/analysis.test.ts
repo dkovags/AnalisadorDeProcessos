@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyze, classifyText, explicitTerms, requestedDocs } from "../src/domain/analysis";
-import { courtRef, eprocDoc, eventText, firstStampedPage, headingTitle, parseCaseFile, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
+import { courtRef, eprocDoc, eventText, firstStampedPage, headingTitle, parseCaseFile, pjeId, type LayoutSegment, type OutlineEntry } from "../src/domain/casefile";
 import { representationOf } from "../src/domain/representation";
 import { cnjCheckDigits, cnjInFileName, cnjInText, formatCnj } from "../src/domain/cnj";
 import { fixOrdinals, fold } from "../src/domain/text";
@@ -325,7 +325,42 @@ e4f5a6b 10/02/2025 09:00 Substabelecimento Substabelecimento
       `Número: 0801234-56.2023.8.20.5001\nDocumentos\nId. Data da Assinatura Documento Tipo\na1b2c3d 10/02/2025 09:00 Petição Inicial Petição Inicial`,
       "texto\nID. alb2c3d - Pág. 1",
     ]);
-    expect(info.docs[1]).toMatchObject({ courtId: "alb2c3d", title: "Petição Inicial", type: "inicial" });
+    // "l" no lugar do "1": o código é corrigido e casa com o índice
+    expect(info.docs[1]).toMatchObject({ courtId: "a1b2c3d", title: "Petição Inicial", type: "inicial" });
+  });
+
+  it("trocas da leitura de imagens no código (\"€\" por \"e\", \"í\" por \"1\") não juntam documentos", () => {
+    expect(pjeId("1a615€4")).toBe("1a615e4");
+    expect(pjeId("1a4fí7d")).toBe("1a4f17d");
+    expect(pjeId("4OOOOOO1")).toBe("40000001");
+    // como no teste com 705 páginas: a carta de preposição (que é cortada) não pode levar a contestação junto
+    const info = parseCaseFile([
+      "Documentos do processo (cópia)",
+      "CARTA DE PREPOSIÇÃO\nID. 1a5f6f5 - Pág. 1",
+      "CONTESTAÇÃO\nID. 1a615€4 - Pág. 1",
+      "continuação\nID. 1a615€4 - Pág. 2",
+      "ATA DE AUDIÊNCIA\nID. 1a4fí7d - Pág. 1",
+    ]);
+    expect(info.docs.slice(1).map((d) => [d.title, d.pages, representationOf(d) || ""])).toEqual([
+      ["Carta de Preposição", [2, 2], "representacao"],
+      ["Contestação", [3, 4], ""],
+      ["Ata de Audiência", [5, 5], ""],
+    ]);
+  });
+
+  it("a primeira página de um documento sem carimbo legível volta para ele (pela numeração das seguintes)", () => {
+    const info = parseCaseFile([
+      "Documentos do processo (cópia)",
+      "SUBSTABELECIMENTO\nID. a1b2c3d - Pág. 1",
+      // carimbo ilegível na primeira página da contestação
+      "CONTESTAÇÃO\nborrado",
+      "continuação\nID. e4f5a6b - Pág. 2",
+      "continuação\nID. e4f5a6b - Pág. 3",
+    ]);
+    expect(info.docs.slice(1).map((d) => [d.title, d.pages, representationOf(d) || ""])).toEqual([
+      ["Substabelecimento", [2, 2], "representacao"],
+      ["Contestação", [3, 5], ""],
+    ]);
   });
 
   it("acha a primeira página com carimbo de tribunal (antes dela ficam a capa e o índice)", () => {
